@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wa-llm-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      FRONTEND_URL: "http://localhost:3000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - sqlite_data:/app
+    networks:
+      - wa-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: wa-llm-frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - wa-network
+
+volumes:
+  sqlite_data:
+
+networks:
+  wa-network:
+    driver: bridge
