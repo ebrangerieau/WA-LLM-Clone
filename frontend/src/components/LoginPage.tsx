@@ -32,8 +32,8 @@ export default function LoginPage() {
           <div className="w-16 h-16 mx-auto bg-white/20 rounded-full flex items-center justify-center mb-4">
             <Lock size={28} className="text-white" />
           </div>
-          <h1 className="text-white text-2xl font-bold">WA-LLM-Clone</h1>
-          <p className="text-white/70 text-sm mt-1">Votre assistant IA privé</p>
+          <h1 className="text-white text-2xl font-bold">Mia</h1>
+          <p className="text-white/70 text-sm mt-1">Mon Intelligence Artificielle</p>
         </div>
 
         <form onSubmit={handleSubmit} className="px-8 py-6 space-y-4">

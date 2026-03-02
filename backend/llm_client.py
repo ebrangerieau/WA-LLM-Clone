@@ -1,133 +1,61 @@
 import os
 import httpx
 import json
-from typing import AsyncGenerator, List, Dict
+from typing import AsyncGenerator, List, Dict, Optional
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-
-# Models known to generate images
-IMAGE_GENERATION_MODELS = {
-    "google/gemini-flash-1.5-8b",
-    "google/gemini-2.0-flash-exp:free",
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    "openai/dall-e-3",
-}
-
 SUMMARIZER_MODEL = "openai/gpt-4o-mini"
+SUMMARIZER_PROVIDER = "openrouter"
+
+IMAGE_GENERATION_KEYWORDS = ["image", "dall-e", "stable-diffusion", "midjourney", "flux"]
 
 
 def is_image_model(model_id: str) -> bool:
-    return any(img_model in model_id.lower() for img_model in [
-        "image", "dall-e", "stable-diffusion", "midjourney", "flux"
-    ]) or model_id in IMAGE_GENERATION_MODELS
+    return any(kw in model_id.lower() for kw in IMAGE_GENERATION_KEYWORDS)
 
 
+def is_ollama_model(model_id: str) -> bool:
+    return model_id.startswith("ollama/")
+
+
+# ---------------------------------------------------------------------------
+# Main entry points
+# ---------------------------------------------------------------------------
 async def stream_chat(
     messages: List[Dict],
     model_id: str,
+    provider_id: str = "openrouter",
 ) -> AsyncGenerator[str, None]:
-    """Stream chat completion via OpenRouter SSE."""
+    if provider_id == "ollama" or is_ollama_model(model_id):
+        name = model_id.replace("ollama/", "")
+        async for chunk in _stream_ollama(messages, name):
+            yield chunk
+    else:
+        async for chunk in _stream_openai_compat(messages, model_id, provider_id):
+            yield chunk
+
+
+async def generate_image(prompt: str, model_id: str, provider_id: str = "openrouter") -> str:
+    from providers import get_provider
+    provider = get_provider(provider_id)
+    if not provider:
+        raise Exception(f"Provider '{provider_id}' introuvable")
+
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {provider['api_key']}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://wa-llm-clone.local",
-        "X-Title": "WA-LLM-Clone",
+        "HTTP-Referer": "https://max.bandtrack.fr",
+        "X-Title": "Mia",
     }
-
-    payload = {
-        "model": model_id,
-        "messages": messages,
-        "stream": True,
-        "max_tokens": 2048,
-    }
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        async with client.stream(
-            "POST",
-            f"{OPENROUTER_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                        delta = chunk["choices"][0]["delta"]
-                        content = delta.get("content", "")
-                        if content:
-                            yield content
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-
-
-async def generate_image(prompt: str, model_id: str) -> str:
-    """Generate image via OpenRouter, returns image URL or base64."""
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://wa-llm-clone.local",
-        "X-Title": "WA-LLM-Clone",
-    }
-
     payload = {
         "model": model_id,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 1024,
     }
-
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
-            f"{OPENROUTER_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        content = data["choices"][0]["message"]["content"]
-        # Content may be text with an image URL, or base64
-        return content
-
-
-async def summarize_messages(messages: List[Dict]) -> str:
-    """Use a lightweight model to summarize old messages."""
-    history_text = "\n".join(
-        f"{m['role'].upper()}: {m['content']}" for m in messages
-    )
-
-    summary_messages = [
-        {
-            "role": "user",
-            "content": (
-                "Résume de manière concise et structurée la conversation suivante "
-                "en conservant les informations clés, les décisions prises et le contexte important. "
-                "Réponds en français si la conversation est en français.\n\n"
-                f"{history_text}"
-            ),
-        }
-    ]
-
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://wa-llm-clone.local",
-        "X-Title": "WA-LLM-Clone",
-    }
-
-    payload = {
-        "model": SUMMARIZER_MODEL,
-        "messages": summary_messages,
-        "max_tokens": 512,
-    }
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"{OPENROUTER_BASE_URL}/chat/completions",
+            f"{provider['base_url']}/chat/completions",
             headers=headers,
             json=payload,
         )
@@ -136,20 +64,149 @@ async def summarize_messages(messages: List[Dict]) -> str:
         return data["choices"][0]["message"]["content"]
 
 
-async def fetch_available_models() -> List[Dict]:
-    """Fetch list of available models from OpenRouter."""
+async def summarize_messages(messages: List[Dict]) -> str:
+    history_text = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages)
+    summary_messages = [{
+        "role": "user",
+        "content": (
+            "Résume de manière concise et structurée la conversation suivante "
+            "en conservant les informations clés. Réponds dans la même langue.\n\n"
+            f"{history_text}"
+        ),
+    }]
+    result = []
+    async for chunk in _stream_openai_compat(summary_messages, SUMMARIZER_MODEL, SUMMARIZER_PROVIDER):
+        result.append(chunk)
+    return "".join(result)
+
+
+# ---------------------------------------------------------------------------
+# Provider-specific streaming
+# ---------------------------------------------------------------------------
+async def _stream_openai_compat(
+    messages: List[Dict],
+    model_id: str,
+    provider_id: str,
+) -> AsyncGenerator[str, None]:
+    from providers import get_provider
+    provider = get_provider(provider_id)
+    if not provider:
+        raise Exception(f"Provider '{provider_id}' introuvable")
+    if not provider["api_key"] and provider_id != "ollama":
+        raise Exception(f"Clé API manquante pour '{provider['name']}'. Ajoutez-la dans le .env")
+
+    # Sanitize messages
+    clean_messages = []
+    for m in messages:
+        content = m.get("content") or " "
+        clean_messages.append({"role": m["role"], "content": content})
+
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {provider['api_key']}",
+        "Content-Type": "application/json",
     }
+    # Headers spécifiques OpenRouter
+    if provider_id == "openrouter":
+        headers["HTTP-Referer"] = "https://max.bandtrack.fr"
+        headers["X-Title"] = "Mia"
+
+    payload = {
+        "model": model_id,
+        "messages": clean_messages,
+        "stream": True,
+        "max_tokens": 2048,
+    }
+    # middle-out uniquement OpenRouter
+    if provider_id == "openrouter":
+        payload["transforms"] = ["middle-out"]
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        async with client.stream(
+            "POST",
+            f"{provider['base_url']}/chat/completions",
+            headers=headers,
+            json=payload,
+        ) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                raise Exception(f"{provider['name']} {response.status_code}: {body.decode()}")
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        content = chunk["choices"][0]["delta"].get("content", "")
+                        if content:
+                            yield content
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+
+
+async def _stream_ollama(
+    messages: List[Dict],
+    model_name: str,
+) -> AsyncGenerator[str, None]:
+    payload = {"model": model_name, "messages": messages, "stream": True}
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        async with client.stream(
+            "POST",
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json=payload,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    content = chunk.get("message", {}).get("content", "")
+                    if content:
+                        yield content
+                    if chunk.get("done"):
+                        break
+                except json.JSONDecodeError:
+                    continue
+
+
+# ---------------------------------------------------------------------------
+# Fetch models per provider
+# ---------------------------------------------------------------------------
+async def fetch_available_models() -> List[Dict]:
+    """Retourne tous les modèles de tous les providers activés."""
+    from providers import get_providers
+    all_models = []
+
+    for provider in get_providers():
+        pid = provider["id"]
+        try:
+            if pid == "ollama":
+                models = await _fetch_ollama_models()
+            elif pid == "openrouter":
+                models = await _fetch_openrouter_models(provider)
+            else:
+                models = await _fetch_openai_compat_models(provider)
+
+            for m in models:
+                m["provider_id"] = pid
+                m["provider_name"] = provider["name"]
+            all_models.extend(models)
+        except Exception:
+            continue  # Provider non disponible, on skip silencieusement
+
+    return all_models
+
+
+async def _fetch_openrouter_models(provider: dict) -> List[Dict]:
+    headers = {"Authorization": f"Bearer {provider['api_key']}"}
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
-            f"{OPENROUTER_BASE_URL}/models",
+            f"{provider['base_url']}/models",
             headers=headers,
         )
         response.raise_for_status()
         data = response.json()
-        models = data.get("data", [])
-        # Return simplified list
         return [
             {
                 "id": m["id"],
@@ -157,5 +214,45 @@ async def fetch_available_models() -> List[Dict]:
                 "context_length": m.get("context_length", 0),
                 "pricing": m.get("pricing", {}),
             }
+            for m in data.get("data", [])
+        ]
+
+
+async def _fetch_openai_compat_models(provider: dict) -> List[Dict]:
+    if not provider["api_key"]:
+        return []
+    headers = {"Authorization": f"Bearer {provider['api_key']}"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{provider['base_url']}/models",
+            headers=headers,
+        )
+        response.raise_for_status()
+        data = response.json()
+        models = data.get("data", data.get("models", []))
+        return [
+            {
+                "id": m["id"],
+                "name": m.get("name", m["id"]),
+                "context_length": m.get("context_length", m.get("max_tokens", 0)),
+                "pricing": {},
+            }
             for m in models
+            if isinstance(m, dict) and "id" in m
+        ]
+
+
+async def _fetch_ollama_models() -> List[Dict]:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
+        response.raise_for_status()
+        data = response.json()
+        return [
+            {
+                "id": f"ollama/{m.get('name', '')}",
+                "name": f"🏠 {m.get('name', '')} (local)",
+                "context_length": 0,
+                "pricing": {"prompt": "0", "completion": "0"},
+            }
+            for m in data.get("models", [])
         ]

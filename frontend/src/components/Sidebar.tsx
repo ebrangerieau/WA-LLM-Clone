@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import KnowledgeBase from "./KnowledgeBase";
 import {
   MessageSquarePlus,
   Search,
@@ -89,9 +90,9 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
       <div className="flex items-center justify-between px-4 py-3 bg-[#202c33]">
         <div className="flex items-center gap-2">
           <div className="w-9 h-9 rounded-full bg-[#075e54] flex items-center justify-center font-bold text-sm">
-            WA
+            M
           </div>
-          <span className="font-semibold text-base">WA-LLM-Clone</span>
+          <span className="font-semibold text-base">Mia</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -193,6 +194,7 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
           </div>
         ))}
       </div>
+      <KnowledgeBase />
     </div>
   );
 }

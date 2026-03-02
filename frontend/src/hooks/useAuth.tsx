@@ -17,7 +17,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("wa_token");
+    const token = localStorage.getItem("mia_token");
     setIsAuthenticated(!!token);
     setIsLoading(false);
   }, []);

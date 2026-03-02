@@ -2,7 +2,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("wa_token");
+  return localStorage.getItem("mia_token");
 }
 
 function authHeaders(): HeadersInit {
@@ -24,12 +24,69 @@ export async function login(username: string, password: string): Promise<string>
     throw new Error(err.detail || "Erreur de connexion");
   }
   const data = await res.json();
-  localStorage.setItem("wa_token", data.access_token);
+  localStorage.setItem("mia_token", data.access_token);
   return data.access_token;
 }
 
 export function logout() {
-  localStorage.removeItem("wa_token");
+  localStorage.removeItem("mia_token");
+}
+
+// ------------------------------------------------------------------
+// RAG — Base de connaissances
+// ------------------------------------------------------------------
+export interface RagDocument {
+  filename: string;
+  chunks: number;
+}
+
+export async function fetchRagDocuments(): Promise<RagDocument[]> {
+  const res = await fetch(`${API_BASE}/api/rag/documents`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("Erreur chargement documents RAG");
+  return res.json();
+}
+
+export async function indexRagDocument(
+  filename: string,
+  mimeType: string,
+  base64: string
+): Promise<{ filename: string; chunks: number; chars: number }> {
+  const res = await fetch(`${API_BASE}/api/rag/index`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ filename, mime_type: mimeType, base64 }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Erreur indexation");
+  }
+  return res.json();
+}
+
+export async function deleteRagDocument(filename: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/rag/documents/${encodeURIComponent(filename)}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  if (!res.ok) throw new Error("Erreur suppression document");
+}
+
+// ------------------------------------------------------------------
+// Providers
+// ------------------------------------------------------------------
+export interface Provider {
+  id: string;
+  name: string;
+  enabled: boolean;
+  rag_allowed: boolean;
+}
+
+export async function fetchProviders(): Promise<Provider[]> {
+  const res = await fetch(`${API_BASE}/api/providers`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Impossible de charger les providers");
+  return res.json();
 }
 
 // ------------------------------------------------------------------
@@ -40,12 +97,15 @@ export interface LLMModel {
   name: string;
   context_length: number;
   pricing: Record<string, unknown>;
+  provider_id: string;
+  provider_name: string;
 }
 
-export async function fetchModels(): Promise<LLMModel[]> {
-  const res = await fetch(`${API_BASE}/api/models`, {
-    headers: authHeaders(),
-  });
+export async function fetchModels(providerId?: string): Promise<LLMModel[]> {
+  const url = providerId
+    ? `${API_BASE}/api/models?provider=${providerId}`
+    : `${API_BASE}/api/models`;
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) throw new Error("Impossible de charger les modèles");
   const data = await res.json();
   return data.models;
@@ -123,12 +183,22 @@ export type StreamEvent =
   | { type: "image_loading" }
   | { type: "image"; content: string; message_id: number }
   | { type: "done"; message_id?: number }
+  | { type: "title"; title: string }
   | { type: "error"; message: string };
+
+export interface FilePayload {
+  name: string;
+  type: string;
+  size: number;
+  base64: string;
+}
 
 export async function* streamChat(
   conversationId: number,
   message: string,
-  modelId: string
+  modelId: string,
+  providerId: string = "openrouter",
+  files: FilePayload[] = []
 ): AsyncGenerator<StreamEvent> {
   const token = getToken();
   const res = await fetch(`${API_BASE}/api/chat/stream`, {
@@ -141,6 +211,8 @@ export async function* streamChat(
       conversation_id: conversationId,
       message,
       model_id: modelId,
+      provider_id: providerId,
+      files,
     }),
   });
 

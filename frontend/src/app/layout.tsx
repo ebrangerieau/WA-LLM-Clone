@@ -3,8 +3,8 @@ import "./globals.css";
 import { AuthProvider } from "@/hooks/useAuth";
 
 export const metadata: Metadata = {
-  title: "WA-LLM-Clone",
-  description: "Interface de chat IA style WhatsApp",
+  title: "Mia",
+  description: "Mia — Mon Intelligence Artificielle",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
