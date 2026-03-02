@@ -116,16 +116,24 @@ async def stream_chat_with_tools(
     if not provider:
         raise Exception(f"Provider '{provider_id}' introuvable")
 
-    # Sanitize messages — les messages de type "tool" peuvent avoir content=None
+    # Sanitize messages — APIs like Mistral strictly require "content" to be a string
+    # even when providing 'tool_calls', unlike OpenAI which allows omitting it.
     clean_messages = []
     for m in messages:
+        clean_m = {
+            "role": m["role"],
+            "content": _normalize_content(m.get("content") or ""),
+        }
         if m.get("role") == "tool":
-            clean_messages.append(m)  # passés tels quels (tool_call_id requis)
+            clean_m["tool_call_id"] = m.get("tool_call_id", "")
+            if "name" in m:
+                clean_m["name"] = m["name"]
         elif m.get("role") == "assistant" and "tool_calls" in m:
-            clean_messages.append(m)
-        else:
-            content = m.get("content") or " "
-            clean_messages.append({"role": m["role"], "content": content})
+            clean_m["tool_calls"] = m["tool_calls"]
+        elif not clean_m["content"]:
+            clean_m["content"] = " "  # fallback pour éviter content vide si refusé
+            
+        clean_messages.append(clean_m)
 
     headers = {
         "Authorization": f"Bearer {provider['api_key']}",
