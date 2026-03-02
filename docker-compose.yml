@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   backend:
     build:
@@ -8,42 +10,36 @@ services:
     env_file:
       - .env
     environment:
-      FRONTEND_URL: "https://max.bandtrack.fr"
+      FRONTEND_URL: "http://localhost:3000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - sqlite_data:/app
     networks:
       - wa-network
-      - web
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=web"
-      - "traefik.http.routers.wa-backend.rule=Host(`max.bandtrack.fr`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.wa-backend.entrypoints=websecure"
-      - "traefik.http.routers.wa-backend.tls.certresolver=letsencrypt"
-      - "traefik.http.services.wa-backend.loadbalancer.server.port=8000"
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+<<<<<<< HEAD
       args:
         - NEXT_PUBLIC_API_URL=https://max.bandtrack.fr
     container_name: mia-frontend
+=======
+    container_name: wa-llm-frontend
+>>>>>>> 30b1728cdf48b0bceee7671f2726f9904cce08ef
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      NEXT_PUBLIC_API_URL: "https://max.bandtrack.fr"
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+    ports:
+      - "3000:3000"
     depends_on:
       - backend
     networks:
       - wa-network
-      - web
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=web"
-      - "traefik.http.routers.wa-frontend.rule=Host(`max.bandtrack.fr`)"
-      - "traefik.http.routers.wa-frontend.entrypoints=websecure"
-      - "traefik.http.routers.wa-frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.services.wa-frontend.loadbalancer.server.port=3000"
 
 volumes:
   sqlite_data:
@@ -52,5 +48,3 @@ volumes:
 networks:
   wa-network:
     driver: bridge
-  web:
-    external: true
