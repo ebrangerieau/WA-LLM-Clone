@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCheck, Copy, Check, Loader2 } from "lucide-react";
+import { CheckCheck, Copy, Check, Loader2, BookOpen, ChevronDown, ChevronUp } from "lucide-react";
 import { ChatMessage } from "@/lib/api";
 
 interface Props {
@@ -188,7 +188,9 @@ export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
   const [imgError, setImgError] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [ragOpen, setRagOpen] = useState(false);
   const modelLabel = message.model_id?.split("/").pop();
+  const hasRag = !isUser && message.rag_sources && message.rag_sources.length > 0;
 
   const handleCopy = async () => {
     try {
@@ -211,11 +213,10 @@ export default function MessageBubble({ message }: Props) {
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-1`}>
       <div
-        className={`relative max-w-[75%] sm:max-w-[65%] rounded-2xl px-3 py-2 shadow-sm ${
-          isUser
+        className={`relative max-w-[75%] sm:max-w-[65%] rounded-2xl px-3 py-2 shadow-sm ${isUser
             ? "bg-[#dcf8c6] text-gray-800 rounded-br-sm"
             : "bg-white text-gray-800 rounded-bl-sm"
-        }`}
+          }`}
       >
         {/* Image */}
         {message.is_image && !imgError ? (
@@ -231,6 +232,30 @@ export default function MessageBubble({ message }: Props) {
           )
         ) : (
           <div className="text-sm">{renderMarkdown(message.content)}</div>
+        )}
+
+        {/* RAG badge */}
+        {hasRag && (
+          <div className="mt-2">
+            <button
+              onClick={() => setRagOpen((o) => !o)}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors text-emerald-700 text-[10px] font-medium"
+            >
+              <BookOpen size={10} />
+              <span>Base de connaissances ({message.rag_sources!.length} source{message.rag_sources!.length > 1 ? "s" : ""})</span>
+              {ragOpen ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+            </button>
+            {ragOpen && (
+              <ul className="mt-1.5 space-y-0.5 pl-1">
+                {message.rag_sources!.map((src, i) => (
+                  <li key={i} className="flex items-center gap-1.5 text-[10px] text-emerald-600">
+                    <span className="w-1 h-1 rounded-full bg-emerald-400 flex-shrink-0" />
+                    <span className="truncate max-w-[200px]" title={src}>{src}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
 
         {/* Meta */}

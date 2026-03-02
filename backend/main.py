@@ -2,6 +2,11 @@ import os
 import json
 from typing import List, Optional
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environments
+load_dotenv()
+load_dotenv("../.env")
 
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -356,15 +361,19 @@ async def chat_stream(
         llm_messages.append({"role": "user", "content": user_content})
 
     # Injection RAG : uniquement pour les providers de confiance (données sensibles)
+    rag_sources: list[str] = []
     if req.message.strip() and req.provider_id in RAG_ALLOWED_PROVIDERS:
         try:
-            from rag import build_rag_context
-            rag_ctx = build_rag_context(req.message)
-            if rag_ctx:
-                if llm_messages and llm_messages[0]["role"] == "system":
-                    llm_messages[0]["content"] += "\n\n" + rag_ctx
-                else:
-                    llm_messages.insert(0, {"role": "system", "content": rag_ctx})
+            from rag import build_rag_context, search
+            rag_chunks = search(req.message)
+            if rag_chunks:
+                rag_sources = list(dict.fromkeys(c["source"] for c in rag_chunks))
+                rag_ctx = build_rag_context(req.message)
+                if rag_ctx:
+                    if llm_messages and llm_messages[0]["role"] == "system":
+                        llm_messages[0]["content"] += "\n\n" + rag_ctx
+                    else:
+                        llm_messages.insert(0, {"role": "system", "content": rag_ctx})
         except Exception:
             pass
     elif req.message.strip() and req.provider_id not in RAG_ALLOWED_PROVIDERS:
@@ -401,6 +410,10 @@ async def chat_stream(
     async def text_event_stream():
         full_response = []
         try:
+            # Signal RAG si des sources ont été utilisées
+            if rag_sources:
+                yield f"data: {json.dumps({'type': 'rag_used', 'sources': rag_sources})}\n\n"
+
             async for chunk in stream_chat(llm_messages, req.model_id, req.provider_id):
                 full_response.append(chunk)
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
@@ -426,7 +439,7 @@ async def chat_stream(
                 db.commit()
                 yield f"data: {json.dumps({'type': 'title', 'title': title})}\n\n"
 
-            yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id, 'rag_sources': rag_sources})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 

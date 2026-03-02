@@ -50,7 +50,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
   const [ragDocsCount, setRagDocsCount] = useState(0);
 
   useEffect(() => {
-    fetchRagDocuments().then((docs) => setRagDocsCount(docs.length)).catch(() => {});
+    fetchRagDocuments().then((docs) => setRagDocsCount(docs.length)).catch(() => { });
   }, []);
   const [stream, setStream] = useState<StreamState>({ active: false, content: "", isImageLoading: false });
   const [error, setError] = useState<string | null>(null);
@@ -169,6 +169,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
 
       let finalContent = "";
       let isImage = false;
+      let pendingRagSources: string[] = [];
 
       for await (const event of streamChat(conversationId, userInput, model, provider, filePayloads)) {
         if (abortRef.current) break;
@@ -176,6 +177,8 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
         if (event.type === "chunk") {
           finalContent += event.content;
           setStream({ active: true, content: finalContent, isImageLoading: false });
+        } else if (event.type === "rag_used") {
+          pendingRagSources = event.sources;
         } else if (event.type === "image_loading") {
           setStream({ active: true, content: "", isImageLoading: true });
           isImage = true;
@@ -193,10 +196,12 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
           // Met à jour le titre dans la sidebar via callback
           onNewMessage?.();
         } else if (event.type === "done") {
+          const ragSrcs = event.rag_sources?.length ? event.rag_sources : pendingRagSources;
           setStream({ active: false, content: "", isImageLoading: false });
           setMessages((prev) => [...prev, {
             id: event.message_id ?? Date.now(), role: "assistant", content: finalContent,
             model_id: model, is_image: isImage, created_at: new Date().toISOString(),
+            rag_sources: ragSrcs.length > 0 ? ragSrcs : undefined,
           }]);
           onNewMessage?.();
           return;
@@ -332,14 +337,13 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
                 isListening
                   ? "🎙️ En écoute…"
                   : attachedFiles.length > 0
-                  ? "Ajouter un message (optionnel)…"
-                  : "Écrire un message..."
+                    ? "Ajouter un message (optionnel)…"
+                    : "Écrire un message..."
               }
               rows={1}
               disabled={stream.active}
-              className={`flex-1 bg-transparent outline-none resize-none text-sm text-gray-800 placeholder-gray-400 max-h-[120px] overflow-y-auto py-0.5 ${
-                isListening ? "placeholder-red-400" : ""
-              }`}
+              className={`flex-1 bg-transparent outline-none resize-none text-sm text-gray-800 placeholder-gray-400 max-h-[120px] overflow-y-auto py-0.5 ${isListening ? "placeholder-red-400" : ""
+                }`}
             />
             {/* Bouton micro — dans la bulle de saisie */}
             {isSupported && (
@@ -347,11 +351,10 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
                 onClick={toggleMic}
                 disabled={stream.active}
                 title={isListening ? "Arrêter la dictée" : "Dicter un message"}
-                className={`flex-shrink-0 mb-0.5 p-1.5 rounded-full transition-all ${
-                  isListening
+                className={`flex-shrink-0 mb-0.5 p-1.5 rounded-full transition-all ${isListening
                     ? "bg-red-500 text-white animate-pulse"
                     : "text-gray-400 hover:text-[#075e54] hover:bg-gray-100"
-                }`}
+                  }`}
               >
                 {isListening ? <MicOff size={16} /> : <Mic size={16} />}
               </button>
@@ -361,11 +364,10 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
           <button
             onClick={sendMessage}
             disabled={(!input.trim() && attachedFiles.length === 0) || stream.active}
-            className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
-              (input.trim() || attachedFiles.length > 0) && !stream.active
+            className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${(input.trim() || attachedFiles.length > 0) && !stream.active
                 ? "bg-[#075e54] hover:bg-[#054d45] shadow-md"
                 : "bg-gray-300"
-            }`}
+              }`}
           >
             <Send size={18} className={(input.trim() || attachedFiles.length > 0) && !stream.active ? "text-white" : "text-gray-400"} />
           </button>

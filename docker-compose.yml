@@ -3,7 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: wa-llm-backend
+    container_name: mia-backend
     restart: unless-stopped
     env_file:
       - .env
@@ -26,7 +26,7 @@ services:
       dockerfile: Dockerfile
       args:
         - NEXT_PUBLIC_API_URL=https://max.bandtrack.fr
-    container_name: wa-llm-frontend
+    container_name: mia-frontend
     restart: unless-stopped
     env_file:
       - .env
@@ -47,6 +47,7 @@ services:
 
 volumes:
   sqlite_data:
+
 
 networks:
   wa-network:

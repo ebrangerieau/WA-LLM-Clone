@@ -17,7 +17,7 @@ from sentence_transformers import SentenceTransformer
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-CHROMA_DIR = os.getenv("CHROMA_DIR", "/app/chroma_data")
+CHROMA_DIR = os.getenv("CHROMA_DIR", "./chroma_data")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "500"))
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "100"))

@@ -3,7 +3,14 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 
-DATABASE_URL = "sqlite:////app/data/mia.db"
+import os
+from dotenv import load_dotenv
+
+# Load .env from backend/ or parent directory
+load_dotenv()
+load_dotenv("../.env")
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./mia.db")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

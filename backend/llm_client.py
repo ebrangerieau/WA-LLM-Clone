@@ -3,7 +3,7 @@ import httpx
 import json
 from typing import AsyncGenerator, List, Dict, Optional
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SUMMARIZER_MODEL = "openai/gpt-4o-mini"
 SUMMARIZER_PROVIDER = "openrouter"

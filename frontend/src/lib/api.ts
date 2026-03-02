@@ -165,6 +165,7 @@ export interface ChatMessage {
   model_id: string | null;
   is_image: boolean;
   created_at: string;
+  rag_sources?: string[];
 }
 
 export async function fetchMessages(conversationId: number): Promise<ChatMessage[]> {
@@ -182,8 +183,9 @@ export type StreamEvent =
   | { type: "chunk"; content: string }
   | { type: "image_loading" }
   | { type: "image"; content: string; message_id: number }
-  | { type: "done"; message_id?: number }
+  | { type: "done"; message_id?: number; rag_sources?: string[] }
   | { type: "title"; title: string }
+  | { type: "rag_used"; sources: string[] }
   | { type: "error"; message: string };
 
 export interface FilePayload {
