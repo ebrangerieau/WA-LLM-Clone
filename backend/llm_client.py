@@ -80,6 +80,25 @@ async def summarize_messages(messages: List[Dict]) -> str:
     return "".join(result)
 
 
+def _normalize_content(content) -> str:
+    """
+    Normalise le contenu d'un message LLM en texte brut.
+    Certains modèles (via OpenRouter) peuvent retourner une liste de parts
+    (format multimodal) plutôt qu'une chaîne simple.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # Format OpenAI multimodal : [{type: "text", text: "..."}, ...]
+        return "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    return str(content)
+
+
 async def stream_chat_with_tools(
     messages: List[Dict],
     model_id: str,
@@ -159,7 +178,7 @@ async def stream_chat_with_tools(
 
     return {
         "type":    "text",
-        "content": message.get("content", ""),
+        "content": _normalize_content(message.get("content", "")),
     }
 
 
@@ -222,7 +241,7 @@ async def _stream_openai_compat(
                         chunk = json.loads(data)
                         content = chunk["choices"][0]["delta"].get("content", "")
                         if content:
-                            yield content
+                            yield _normalize_content(content)
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
 
