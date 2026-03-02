@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Send, Paperclip, X, FileText, ArrowLeft, Mic, MicOff } from "lucide-react";
+import { Send, Paperclip, X, FileText, ArrowLeft, Mic, MicOff, Plug } from "lucide-react";
 import { fetchMessages, streamChat, ChatMessage, fetchRagDocuments } from "@/lib/api";
 import MessageBubble, { StreamingBubble } from "./MessageBubble";
 import ModelSelector from "./ModelSelector";
 import ProviderSelector from "./ProviderSelector";
+import ConnectorSelector from "./ConnectorSelector";
+import ConnectorsPanel from "./ConnectorsPanel";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
@@ -21,6 +23,7 @@ interface StreamState {
   active: boolean;
   content: string;
   isImageLoading: boolean;
+  toolCalls: { tool: string; status: "running" | "done" }[];
 }
 
 interface AttachedFile {
@@ -48,11 +51,14 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [provider, setProvider] = useState(DEFAULT_PROVIDER);
   const [ragDocsCount, setRagDocsCount] = useState(0);
+  const [activeConnectors, setActiveConnectors] = useState<string[]>([]);
+  const [connectorRefresh, setConnectorRefresh] = useState(0);
+  const [showConnectorsPanel, setShowConnectorsPanel] = useState(false);
 
   useEffect(() => {
     fetchRagDocuments().then((docs) => setRagDocsCount(docs.length)).catch(() => { });
   }, []);
-  const [stream, setStream] = useState<StreamState>({ active: false, content: "", isImageLoading: false });
+  const [stream, setStream] = useState<StreamState>({ active: false, content: "", isImageLoading: false, toolCalls: [] });
   const [error, setError] = useState<string | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -153,7 +159,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempUserMsg]);
-    setStream({ active: true, content: "", isImageLoading: false });
+    setStream({ active: true, content: "", isImageLoading: false, toolCalls: [] });
 
     try {
       const filePayloads = await Promise.all(
@@ -171,21 +177,31 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
       let isImage = false;
       let pendingRagSources: string[] = [];
 
-      for await (const event of streamChat(conversationId, userInput, model, provider, filePayloads)) {
+      for await (const event of streamChat(conversationId, userInput, model, provider, filePayloads, activeConnectors)) {
         if (abortRef.current) break;
 
         if (event.type === "chunk") {
           finalContent += event.content;
-          setStream({ active: true, content: finalContent, isImageLoading: false });
+          setStream((s) => ({ ...s, active: true, content: finalContent, isImageLoading: false }));
+        } else if (event.type === "tool_call") {
+          setStream((s) => {
+            const existing = s.toolCalls.findIndex((t) => t.tool === event.tool);
+            if (existing >= 0) {
+              const updated = [...s.toolCalls];
+              updated[existing] = { tool: event.tool, status: event.status as "running" | "done" };
+              return { ...s, toolCalls: updated };
+            }
+            return { ...s, toolCalls: [...s.toolCalls, { tool: event.tool, status: event.status as "running" | "done" }] };
+          });
         } else if (event.type === "rag_used") {
           pendingRagSources = event.sources;
         } else if (event.type === "image_loading") {
-          setStream({ active: true, content: "", isImageLoading: true });
+          setStream((s) => ({ ...s, active: true, content: "", isImageLoading: true }));
           isImage = true;
         } else if (event.type === "image") {
           finalContent = event.content;
           isImage = true;
-          setStream({ active: false, content: "", isImageLoading: false });
+          setStream({ active: false, content: "", isImageLoading: false, toolCalls: [] });
           setMessages((prev) => [...prev, {
             id: event.message_id, role: "assistant", content: finalContent,
             model_id: model, is_image: true, created_at: new Date().toISOString(),
@@ -193,11 +209,10 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
           onNewMessage?.();
           return;
         } else if (event.type === "title") {
-          // Met à jour le titre dans la sidebar via callback
           onNewMessage?.();
         } else if (event.type === "done") {
           const ragSrcs = event.rag_sources?.length ? event.rag_sources : pendingRagSources;
-          setStream({ active: false, content: "", isImageLoading: false });
+          setStream({ active: false, content: "", isImageLoading: false, toolCalls: [] });
           setMessages((prev) => [...prev, {
             id: event.message_id ?? Date.now(), role: "assistant", content: finalContent,
             model_id: model, is_image: isImage, created_at: new Date().toISOString(),
@@ -211,7 +226,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
       }
     } catch (e: unknown) {
       setError((e as Error).message || "Erreur lors de l'envoi");
-      setStream({ active: false, content: "", isImageLoading: false });
+      setStream({ active: false, content: "", isImageLoading: false, toolCalls: [] });
     }
   };
 
@@ -252,6 +267,16 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
         </div>
         <ProviderSelector selectedProvider={provider} onSelect={(p) => { setProvider(p); }} ragActive={ragDocsCount > 0} />
         <ModelSelector selectedModel={model} selectedProvider={provider} onSelect={setModel} />
+        <button
+          onClick={() => setShowConnectorsPanel(true)}
+          title="Gérer les connecteurs"
+          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${activeConnectors.length > 0
+              ? "bg-amber-400 hover:bg-amber-300 text-white"
+              : "bg-white/10 hover:bg-white/20 text-white"
+            }`}
+        >
+          <Plug size={15} />
+        </button>
       </div>
 
       {/* Messages area */}
@@ -267,7 +292,25 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
           </div>
         )}
         {messages.map((msg) => <MessageBubble key={msg.id} message={msg} />)}
-        {stream.active && <StreamingBubble content={stream.content} isImageLoading={stream.isImageLoading} />}
+        {stream.active && (
+          <>
+            {stream.toolCalls.length > 0 && (
+              <div className="flex flex-col gap-1 mb-1 pl-2">
+                {stream.toolCalls.map((tc, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-gray-500 bg-white/70 rounded-full px-3 py-1 w-fit shadow-sm border border-gray-200">
+                    {tc.status === "running" ? (
+                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    )}
+                    {tc.tool.replace("google_calendar__", "📅 ").replace(/_/g, " ")}
+                  </div>
+                ))}
+              </div>
+            )}
+            <StreamingBubble content={stream.content} isImageLoading={stream.isImageLoading} />
+          </>
+        )}
         {error && (
           <div className="flex justify-center">
             <p className="text-red-500 text-xs bg-red-50 px-3 py-1.5 rounded-full border border-red-100">⚠️ {error}</p>
@@ -322,6 +365,11 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
             onChange={handleFileChange}
             className="hidden"
           />
+          <ConnectorSelector
+            activeConnectors={activeConnectors}
+            onChange={setActiveConnectors}
+            refreshTrigger={connectorRefresh}
+          />
 
           <div className="flex-1 bg-white rounded-3xl px-4 py-2.5 shadow-sm flex items-end gap-2 min-h-[48px]">
             <textarea
@@ -352,8 +400,8 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
                 disabled={stream.active}
                 title={isListening ? "Arrêter la dictée" : "Dicter un message"}
                 className={`flex-shrink-0 mb-0.5 p-1.5 rounded-full transition-all ${isListening
-                    ? "bg-red-500 text-white animate-pulse"
-                    : "text-gray-400 hover:text-[#075e54] hover:bg-gray-100"
+                  ? "bg-red-500 text-white animate-pulse"
+                  : "text-gray-400 hover:text-[#075e54] hover:bg-gray-100"
                   }`}
               >
                 {isListening ? <MicOff size={16} /> : <Mic size={16} />}
@@ -365,14 +413,21 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
             onClick={sendMessage}
             disabled={(!input.trim() && attachedFiles.length === 0) || stream.active}
             className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${(input.trim() || attachedFiles.length > 0) && !stream.active
-                ? "bg-[#075e54] hover:bg-[#054d45] shadow-md"
-                : "bg-gray-300"
+              ? "bg-[#075e54] hover:bg-[#054d45] shadow-md"
+              : "bg-gray-300"
               }`}
           >
             <Send size={18} className={(input.trim() || attachedFiles.length > 0) && !stream.active ? "text-white" : "text-gray-400"} />
           </button>
         </div>
       </div>
+
+      {/* Connectors Panel */}
+      <ConnectorsPanel
+        isOpen={showConnectorsPanel}
+        onClose={() => setShowConnectorsPanel(false)}
+        onConnectorChange={() => setConnectorRefresh((n) => n + 1)}
+      />
     </div>
   );
 }

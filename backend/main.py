@@ -14,10 +14,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from database import get_db, create_tables, Conversation, Message
+from database import get_db, create_tables, Conversation, Message, ConnectorToken
 from auth import verify_token, check_credentials, create_token
-from llm_client import stream_chat, generate_image, summarize_messages, fetch_available_models, is_image_model
+from llm_client import stream_chat, stream_chat_with_tools, generate_image, summarize_messages, fetch_available_models, is_image_model
 from rag import index_document, list_documents, delete_document, build_rag_context
+from connectors import get_connector, list_connectors, CONNECTOR_REGISTRY
 
 # ---------------------------------------------------------------------------
 # App init
@@ -75,6 +76,7 @@ class ChatRequest(BaseModel):
     model_id: str
     provider_id: str = "openrouter"
     files: List[FilePayload] = []
+    active_connectors: List[str] = []   # liste d'IDs de connecteurs activés pour ce message
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +445,93 @@ async def chat_stream(
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
+    # ── Connecteurs actifs : boucle function-calling ──────────────────────
+    if req.active_connectors:
+        connector_tokens: dict[str, dict] = {}
+        all_tools: list[dict] = []
+        for cid in req.active_connectors:
+            row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == cid).first()
+            if not row:
+                continue
+            connector_tokens[cid] = json.loads(row.token_json)
+            connector_def = get_connector(cid)
+            if connector_def:
+                all_tools.extend(connector_def["tools"]())
+
+        async def tool_event_stream():
+            full_response = []
+            current_messages = list(llm_messages)
+            try:
+                if rag_sources:
+                    yield f"data: {json.dumps({'type': 'rag_used', 'sources': rag_sources})}\n\n"
+
+                for _turn in range(5):
+                    result = await stream_chat_with_tools(
+                        current_messages, req.model_id, req.provider_id, all_tools
+                    )
+                    if result["type"] == "text":
+                        text = result["content"]
+                        full_response.append(text)
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': text})}\n\n"
+                        break
+                    elif result["type"] == "tool_calls":
+                        for tc in result["tool_calls"]:
+                            yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc['name'], 'status': 'running'})}\n\n"
+
+                        tool_results = []
+                        for tc in result["tool_calls"]:
+                            tc_name = tc["name"]
+                            tc_args = tc["arguments"]
+                            cid_for_tool = tc_name.split("__")[0]
+                            tool_result: dict = {"error": "Connecteur ou token introuvable"}
+                            if cid_for_tool in connector_tokens:
+                                c_def = get_connector(cid_for_tool)
+                                if c_def:
+                                    try:
+                                        tool_result = await c_def["call"](tc_name, tc_args, connector_tokens[cid_for_tool])
+                                        if "updated" in tool_result:
+                                            connector_tokens[cid_for_tool] = tool_result.pop("updated")
+                                            t_row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == cid_for_tool).first()
+                                            if t_row:
+                                                t_row.token_json = json.dumps(connector_tokens[cid_for_tool])
+                                                db.commit()
+                                    except Exception as exc:
+                                        tool_result = {"error": str(exc)}
+
+                            yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc_name, 'status': 'done', 'result_summary': str(tool_result)[:200]})}\n\n"
+                            tool_results.append({"tool_call_id": tc["id"], "name": tc_name, "result": tool_result})
+
+                        current_messages.append({"role": "assistant", "tool_calls": result["raw_tool_calls"]})
+                        for tr in tool_results:
+                            current_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tr["tool_call_id"],
+                                "name": tr["name"],
+                                "content": json.dumps(tr["result"], ensure_ascii=False),
+                            })
+
+                final_content = "".join(full_response)
+                assistant_msg = Message(conversation_id=conv.id, role="assistant", content=final_content, model_id=req.model_id)
+                db.add(assistant_msg)
+                db.commit()
+
+                if is_first_message:
+                    first_text = req.message or (file_names[0] if file_names else "Fichier")
+                    title = await generate_conversation_title(first_text, req.model_id, req.provider_id)
+                    conv.title = title
+                    db.commit()
+                    yield f"data: {json.dumps({'type': 'title', 'title': title})}\n\n"
+
+                yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id, 'rag_sources': rag_sources})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        return StreamingResponse(
+            tool_event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     return StreamingResponse(
         text_event_stream(),
         media_type="text/event-stream",
@@ -491,6 +580,111 @@ def rag_delete(filename: str, user: str = Depends(verify_token)):
 def rag_search(q: str, user: str = Depends(verify_token)):
     from rag import search
     return search(q)
+
+
+# ---------------------------------------------------------------------------
+# Connector (MCP) routes
+# ---------------------------------------------------------------------------
+
+class ConnectorTokenSave(BaseModel):
+    token_json: str   # JSON sérialisé du token
+
+
+@app.get("/api/connectors")
+def list_connectors_route(db: Session = Depends(get_db), user: str = Depends(verify_token)):
+    """Liste tous les connecteurs disponibles avec leur statut d'authentification."""
+    result = []
+    for meta in list_connectors():
+        row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == meta["id"]).first()
+        result.append({
+            **meta,
+            "connected": row is not None,
+        })
+    return result
+
+
+@app.get("/api/connectors/{connector_id}/tools")
+def get_connector_tools(connector_id: str, user: str = Depends(verify_token)):
+    """Retourne les schémas d'outils d'un connecteur."""
+    connector = get_connector(connector_id)
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connecteur introuvable")
+    return connector["tools"]()
+
+
+@app.post("/api/connectors/{connector_id}/token")
+def save_connector_token(
+    connector_id: str,
+    body: ConnectorTokenSave,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_token),
+):
+    """Sauvegarde ou met à jour le token OAuth d'un connecteur."""
+    row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == connector_id).first()
+    if row:
+        row.token_json = body.token_json
+        row.updated_at = datetime.utcnow()
+    else:
+        row = ConnectorToken(connector_id=connector_id, token_json=body.token_json)
+        db.add(row)
+    db.commit()
+    return {"status": "ok", "connector_id": connector_id}
+
+
+@app.delete("/api/connectors/{connector_id}/token", status_code=204)
+def delete_connector_token(
+    connector_id: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_token),
+):
+    """Déconnecte un connecteur (supprime son token)."""
+    row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == connector_id).first()
+    if row:
+        db.delete(row)
+        db.commit()
+
+
+@app.get("/api/connectors/google_calendar/oauth/callback")
+async def google_calendar_oauth_callback(
+    code: str,
+    db: Session = Depends(get_db),
+    # NOTE : pas de verify_token — cette route reçoit une redirection navigateur OAuth (pas de JWT)
+):
+    """Échange le code d'autorisation OAuth contre des tokens."""
+    import httpx as _httpx
+    from connectors import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, GOOGLE_TOKEN_URL
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Code OAuth manquant")
+
+    async with _httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(GOOGLE_TOKEN_URL, data={
+            "code":          code,
+            "client_id":     GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri":  GOOGLE_REDIRECT_URI,
+            "grant_type":    "authorization_code",
+        })
+        if resp.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Erreur OAuth Google : {resp.text}")
+        tok = resp.json()
+
+    tok["expires_at"] = datetime.utcnow().timestamp() + tok.get("expires_in", 3600)
+    token_json = json.dumps(tok)
+
+    row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == "google_calendar").first()
+    if row:
+        row.token_json = token_json
+        row.updated_at = datetime.utcnow()
+    else:
+        row = ConnectorToken(connector_id="google_calendar", token_json=token_json)
+        db.add(row)
+    db.commit()
+
+    # Rediriger vers le frontend avec un flag de succès
+    from fastapi.responses import RedirectResponse
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    return RedirectResponse(url=f"{frontend_url}?connector_connected=google_calendar")
 
 
 # ---------------------------------------------------------------------------

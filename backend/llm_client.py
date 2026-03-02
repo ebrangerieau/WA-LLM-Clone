@@ -80,6 +80,89 @@ async def summarize_messages(messages: List[Dict]) -> str:
     return "".join(result)
 
 
+async def stream_chat_with_tools(
+    messages: List[Dict],
+    model_id: str,
+    provider_id: str,
+    tools: List[Dict],
+) -> Dict:
+    """
+    Appel non-streaming avec function calling.
+    Retourne :
+      {"type": "text",       "content": str}
+      {"type": "tool_calls", "tool_calls": [...], "raw_tool_calls": [...]}
+    """
+    from providers import get_provider
+    provider = get_provider(provider_id)
+    if not provider:
+        raise Exception(f"Provider '{provider_id}' introuvable")
+
+    # Sanitize messages — les messages de type "tool" peuvent avoir content=None
+    clean_messages = []
+    for m in messages:
+        if m.get("role") == "tool":
+            clean_messages.append(m)  # passés tels quels (tool_call_id requis)
+        elif m.get("role") == "assistant" and "tool_calls" in m:
+            clean_messages.append(m)
+        else:
+            content = m.get("content") or " "
+            clean_messages.append({"role": m["role"], "content": content})
+
+    headers = {
+        "Authorization": f"Bearer {provider['api_key']}",
+        "Content-Type": "application/json",
+    }
+    if provider_id == "openrouter":
+        headers["HTTP-Referer"] = "https://max.bandtrack.fr"
+        headers["X-Title"] = "Mia"
+
+    payload: Dict = {
+        "model": model_id,
+        "messages": clean_messages,
+        "tools": tools,
+        "tool_choice": "auto",
+        "stream": False,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            f"{provider['base_url']}/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+        if response.status_code != 200:
+            body = await response.aread()
+            raise Exception(f"{provider['name']} {response.status_code}: {body.decode()}")
+        data = response.json()
+
+    choice = data["choices"][0]
+    message = choice["message"]
+
+    if message.get("tool_calls"):
+        raw_tool_calls = message["tool_calls"]
+        parsed = []
+        for tc in raw_tool_calls:
+            try:
+                arguments = json.loads(tc["function"]["arguments"])
+            except (json.JSONDecodeError, KeyError):
+                arguments = {}
+            parsed.append({
+                "id":        tc["id"],
+                "name":      tc["function"]["name"],
+                "arguments": arguments,
+            })
+        return {
+            "type":           "tool_calls",
+            "tool_calls":     parsed,
+            "raw_tool_calls": raw_tool_calls,
+        }
+
+    return {
+        "type":    "text",
+        "content": message.get("content", ""),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Provider-specific streaming
 # ---------------------------------------------------------------------------

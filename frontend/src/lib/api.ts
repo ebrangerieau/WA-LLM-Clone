@@ -186,6 +186,7 @@ export type StreamEvent =
   | { type: "done"; message_id?: number; rag_sources?: string[] }
   | { type: "title"; title: string }
   | { type: "rag_used"; sources: string[] }
+  | { type: "tool_call"; tool: string; status: string; result_summary?: string }
   | { type: "error"; message: string };
 
 export interface FilePayload {
@@ -200,7 +201,8 @@ export async function* streamChat(
   message: string,
   modelId: string,
   providerId: string = "openrouter",
-  files: FilePayload[] = []
+  files: FilePayload[] = [],
+  activeConnectors: string[] = []
 ): AsyncGenerator<StreamEvent> {
   const token = getToken();
   const res = await fetch(`${API_BASE}/api/chat/stream`, {
@@ -215,6 +217,7 @@ export async function* streamChat(
       model_id: modelId,
       provider_id: providerId,
       files,
+      active_connectors: activeConnectors,
     }),
   });
 

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -41,6 +41,17 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")
+
+
+class ConnectorToken(Base):
+    """Stores OAuth tokens for MCP connectors (one row per connector)."""
+    __tablename__ = "connector_tokens"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    connector_id = Column(String(100), nullable=False, unique=True, index=True)
+    token_json   = Column(Text, nullable=False)   # JSON blob: {access_token, refresh_token, expires_at, ...}
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def get_db():
