@@ -17,6 +17,26 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+class Agent(Base):
+    __tablename__ = "agents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    icon = Column(String(10), default="🤖")
+    system_prompt = Column(Text, nullable=True)
+    model_id = Column(String(200), nullable=True)
+    provider_id = Column(String(50), nullable=True)
+    connectors = Column(Text, default="[]")  # JSON array of connector IDs
+    rag_enabled = Column(Boolean, default=False)
+    is_default = Column(Boolean, default=False)
+    max_tool_turns = Column(Integer, default=5)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    conversations = relationship("Conversation", back_populates="agent")
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -25,8 +45,10 @@ class Conversation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     summary = Column(Text, nullable=True)  # Cached summary for long conversations
+    agent_id = Column(Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
 
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+    agent = relationship("Agent", back_populates="conversations")
 
 
 class Message(Base):

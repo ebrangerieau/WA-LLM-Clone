@@ -72,6 +72,68 @@ export async function deleteRagDocument(filename: string): Promise<void> {
 }
 
 // ------------------------------------------------------------------
+// Agents
+// ------------------------------------------------------------------
+export interface Agent {
+  id: number;
+  name: string;
+  description: string;
+  icon: string;
+  system_prompt: string;
+  model_id: string;
+  provider_id: string;
+  connectors: string[];
+  rag_enabled: boolean;
+  is_default: boolean;
+  max_tool_turns: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export async function fetchAgents(): Promise<Agent[]> {
+  const res = await fetch(`${API_BASE}/api/agents`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("Impossible de charger les agents");
+  return res.json();
+}
+
+export async function createAgent(agent: Omit<Agent, "id" | "is_default" | "created_at" | "updated_at">): Promise<Agent> {
+  const res = await fetch(`${API_BASE}/api/agents`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(agent),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Erreur création agent");
+  }
+  return res.json();
+}
+
+export async function updateAgent(id: number, data: Partial<Agent>): Promise<Agent> {
+  const res = await fetch(`${API_BASE}/api/agents/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Erreur modification agent");
+  }
+  return res.json();
+}
+
+export async function deleteAgent(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/agents/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Erreur suppression agent");
+  }
+}
+
+// ------------------------------------------------------------------
 // Providers
 // ------------------------------------------------------------------
 export interface Provider {
@@ -120,6 +182,9 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   message_count: number;
+  agent_id?: number | null;
+  agent_name?: string | null;
+  agent_icon?: string | null;
 }
 
 export async function fetchConversations(): Promise<Conversation[]> {
@@ -130,13 +195,25 @@ export async function fetchConversations(): Promise<Conversation[]> {
   return res.json();
 }
 
-export async function createConversation(title = "Nouvelle conversation"): Promise<Conversation> {
+export async function createConversation(title = "Nouvelle conversation", agentId?: number): Promise<Conversation> {
   const res = await fetch(`${API_BASE}/api/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, agent_id: agentId ?? null }),
   });
   if (!res.ok) throw new Error("Impossible de créer la conversation");
+  return res.json();
+}
+
+export interface ConversationDetail extends Conversation {
+  agent: Agent | null;
+}
+
+export async function fetchConversation(id: number): Promise<ConversationDetail> {
+  const res = await fetch(`${API_BASE}/api/conversations/${id}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Impossible de charger la conversation");
   return res.json();
 }
 

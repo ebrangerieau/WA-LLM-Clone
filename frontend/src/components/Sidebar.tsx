@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import KnowledgeBase from "./KnowledgeBase";
+import AgentSelector from "./AgentSelector";
+import AgentManager from "./AgentManager";
 import {
   MessageSquarePlus,
   Search,
@@ -10,6 +12,7 @@ import {
   Edit3,
   Check,
   X,
+  Bot,
 } from "lucide-react";
 import {
   fetchConversations,
@@ -32,6 +35,9 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [showAgentSelector, setShowAgentSelector] = useState(false);
+  const [showAgentManager, setShowAgentManager] = useState(false);
+  const [showAgentForm, setShowAgentForm] = useState(false);
 
   const load = async () => {
     try {
@@ -46,8 +52,13 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
     load();
   }, [refreshTrigger]);
 
-  const handleNew = async () => {
-    const conv = await createConversation();
+  const handleNew = () => {
+    setShowAgentSelector(true);
+  };
+
+  const handleAgentSelected = async (agentId?: number) => {
+    setShowAgentSelector(false);
+    const conv = await createConversation("Nouvelle conversation", agentId);
     setConversations((prev) => [conv as Conversation, ...prev]);
     onSelect(conv.id);
   };
@@ -94,7 +105,14 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
           </div>
           <span className="font-semibold text-base">Mia</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowAgentManager(true)}
+            title="Gérer les agents"
+            className="p-2 rounded-full hover:bg-white/10 transition-colors"
+          >
+            <Bot size={18} className="text-gray-300" />
+          </button>
           <button
             onClick={handleNew}
             title="Nouvelle conversation"
@@ -144,7 +162,7 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
             }`}
           >
             <div className="w-10 h-10 rounded-full bg-[#075e54] flex-shrink-0 flex items-center justify-center text-white font-semibold text-sm">
-              {conv.title.charAt(0).toUpperCase()}
+              {conv.agent_icon || conv.title.charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
               {editingId === conv.id ? (
@@ -195,6 +213,40 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
         ))}
       </div>
       <KnowledgeBase />
+
+      {/* Agent Selector Modal */}
+      <AgentSelector
+        isOpen={showAgentSelector}
+        onClose={() => setShowAgentSelector(false)}
+        onSelect={handleAgentSelected}
+        onCreateAgent={() => {
+          setShowAgentSelector(false);
+          setShowAgentForm(true);
+        }}
+      />
+
+      {/* Agent Manager Panel */}
+      <AgentManager
+        isOpen={showAgentManager}
+        onClose={() => setShowAgentManager(false)}
+      />
+
+      {/* Agent Form (create from selector) */}
+      {showAgentForm && (
+        <AgentFormModal
+          onClose={() => setShowAgentForm(false)}
+          onSaved={() => {
+            setShowAgentForm(false);
+            setShowAgentSelector(true);
+          }}
+        />
+      )}
     </div>
   );
+}
+
+/* Inline wrapper to lazily import AgentForm */
+function AgentFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const AgentForm = require("./AgentForm").default;
+  return <AgentForm onClose={onClose} onSaved={onSaved} />;
 }

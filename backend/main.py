@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from database import get_db, create_tables, Conversation, Message, ConnectorToken
+from database import get_db, create_tables, Conversation, Message, ConnectorToken, Agent, engine
 from auth import verify_token, check_credentials, create_token
 from llm_client import stream_chat, stream_chat_with_tools, generate_image, summarize_messages, fetch_available_models, is_image_model
 from rag import index_document, list_documents, delete_document, build_rag_context
@@ -42,9 +42,35 @@ CONTEXT_THRESHOLD = 10
 KEEP_RECENT = 3
 
 
+def _migrate_add_agent_id():
+    """Ajoute la colonne agent_id à conversations si elle n'existe pas (migration SQLite)."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(conversations)"))]
+        if "agent_id" not in cols:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN agent_id INTEGER REFERENCES agents(id) ON DELETE SET NULL"))
+            conn.commit()
+
+
+def _seed_default_agents():
+    """Insère les agents par défaut si la table agents est vide."""
+    from default_agents import DEFAULT_AGENTS
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        if db.query(Agent).count() == 0:
+            for a in DEFAULT_AGENTS:
+                db.add(Agent(**a))
+            db.commit()
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def startup():
     create_tables()
+    _migrate_add_agent_id()
+    _seed_default_agents()
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +81,33 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class AgentCreate(BaseModel):
+    name: str
+    description: str = ""
+    icon: str = "🤖"
+    system_prompt: str = ""
+    model_id: str = ""
+    provider_id: str = ""
+    connectors: List[str] = []
+    rag_enabled: bool = False
+    max_tool_turns: int = 5
+
+
+class AgentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    system_prompt: Optional[str] = None
+    model_id: Optional[str] = None
+    provider_id: Optional[str] = None
+    connectors: Optional[List[str]] = None
+    rag_enabled: Optional[bool] = None
+    max_tool_turns: Optional[int] = None
+
+
 class ConversationCreate(BaseModel):
     title: str = "Nouvelle conversation"
+    agent_id: Optional[int] = None
 
 
 class ConversationUpdate(BaseModel):
@@ -108,6 +159,88 @@ def get_providers_route(user: str = Depends(verify_token)):
 
 
 # ---------------------------------------------------------------------------
+# Agent routes
+# ---------------------------------------------------------------------------
+def _agent_to_dict(a: Agent) -> dict:
+    return {
+        "id": a.id,
+        "name": a.name,
+        "description": a.description or "",
+        "icon": a.icon or "🤖",
+        "system_prompt": a.system_prompt or "",
+        "model_id": a.model_id or "",
+        "provider_id": a.provider_id or "",
+        "connectors": json.loads(a.connectors) if a.connectors else [],
+        "rag_enabled": a.rag_enabled,
+        "is_default": a.is_default,
+        "max_tool_turns": a.max_tool_turns or 5,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+    }
+
+
+@app.get("/api/agents")
+def list_agents(db: Session = Depends(get_db), user: str = Depends(verify_token)):
+    agents = db.query(Agent).order_by(Agent.is_default.desc(), Agent.name).all()
+    return [_agent_to_dict(a) for a in agents]
+
+
+@app.post("/api/agents", status_code=201)
+def create_agent(body: AgentCreate, db: Session = Depends(get_db), user: str = Depends(verify_token)):
+    agent = Agent(
+        name=body.name,
+        description=body.description,
+        icon=body.icon,
+        system_prompt=body.system_prompt,
+        model_id=body.model_id,
+        provider_id=body.provider_id,
+        connectors=json.dumps(body.connectors),
+        rag_enabled=body.rag_enabled,
+        is_default=False,
+        max_tool_turns=body.max_tool_turns,
+    )
+    db.add(agent)
+    db.commit()
+    db.refresh(agent)
+    return _agent_to_dict(agent)
+
+
+@app.get("/api/agents/{agent_id}")
+def get_agent(agent_id: int, db: Session = Depends(get_db), user: str = Depends(verify_token)):
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent introuvable")
+    return _agent_to_dict(agent)
+
+
+@app.patch("/api/agents/{agent_id}")
+def update_agent(agent_id: int, body: AgentUpdate, db: Session = Depends(get_db), user: str = Depends(verify_token)):
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent introuvable")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        if field == "connectors":
+            setattr(agent, field, json.dumps(value))
+        else:
+            setattr(agent, field, value)
+    agent.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(agent)
+    return _agent_to_dict(agent)
+
+
+@app.delete("/api/agents/{agent_id}", status_code=204)
+def delete_agent(agent_id: int, db: Session = Depends(get_db), user: str = Depends(verify_token)):
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent introuvable")
+    if agent.is_default:
+        raise HTTPException(status_code=400, detail="Impossible de supprimer un agent par défaut")
+    db.delete(agent)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
 # Models route
 # ---------------------------------------------------------------------------
 @app.get("/api/models")
@@ -143,6 +276,9 @@ def list_conversations(db: Session = Depends(get_db), user: str = Depends(verify
             "created_at": c.created_at.isoformat(),
             "updated_at": c.updated_at.isoformat(),
             "message_count": len(c.messages),
+            "agent_id": c.agent_id,
+            "agent_name": c.agent.name if c.agent else None,
+            "agent_icon": c.agent.icon if c.agent else None,
         }
         for c in convs
     ]
@@ -154,11 +290,44 @@ def create_conversation(
     db: Session = Depends(get_db),
     user: str = Depends(verify_token),
 ):
-    conv = Conversation(title=body.title)
+    if body.agent_id is not None:
+        agent = db.query(Agent).filter(Agent.id == body.agent_id).first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent introuvable")
+    conv = Conversation(title=body.title, agent_id=body.agent_id)
     db.add(conv)
     db.commit()
     db.refresh(conv)
-    return {"id": conv.id, "title": conv.title, "created_at": conv.created_at.isoformat()}
+    return {
+        "id": conv.id,
+        "title": conv.title,
+        "created_at": conv.created_at.isoformat(),
+        "agent_id": conv.agent_id,
+        "agent_name": conv.agent.name if conv.agent else None,
+        "agent_icon": conv.agent.icon if conv.agent else None,
+    }
+
+
+@app.get("/api/conversations/{conv_id}")
+def get_conversation(
+    conv_id: int,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_token),
+):
+    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation introuvable")
+    return {
+        "id": conv.id,
+        "title": conv.title,
+        "created_at": conv.created_at.isoformat(),
+        "updated_at": conv.updated_at.isoformat(),
+        "message_count": len(conv.messages),
+        "agent_id": conv.agent_id,
+        "agent_name": conv.agent.name if conv.agent else None,
+        "agent_icon": conv.agent.icon if conv.agent else None,
+        "agent": _agent_to_dict(conv.agent) if conv.agent else None,
+    }
 
 
 @app.patch("/api/conversations/{conv_id}")
@@ -322,6 +491,18 @@ async def chat_stream(
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation introuvable")
 
+    # ── Résolution agent ──────────────────────────────────────────────────
+    agent = None
+    if conv.agent_id:
+        agent = db.query(Agent).filter(Agent.id == conv.agent_id).first()
+
+    effective_model = req.model_id if req.model_id else (agent.model_id if agent else "openai/gpt-4o-mini")
+    effective_provider = req.provider_id if req.provider_id else (agent.provider_id if agent else "openrouter")
+    effective_connectors = req.active_connectors if req.active_connectors else (json.loads(agent.connectors) if agent and agent.connectors else [])
+    effective_rag = agent.rag_enabled if agent else (effective_provider in RAG_ALLOWED_PROVIDERS)
+    effective_max_turns = agent.max_tool_turns if agent else 5
+    agent_system_prompt = agent.system_prompt if agent and agent.system_prompt else None
+
     # Save user message
     file_names = [f.name for f in req.files]
     stored_content = req.message
@@ -332,7 +513,7 @@ async def chat_stream(
         conversation_id=conv.id,
         role="user",
         content=stored_content,
-        model_id=req.model_id,
+        model_id=effective_model,
     )
     db.add(user_msg)
     db.commit()
@@ -362,9 +543,18 @@ async def chat_stream(
     else:
         llm_messages.append({"role": "user", "content": user_content})
 
-    # Injection RAG : uniquement pour les providers de confiance (données sensibles)
+    # ── Injection du system prompt de l'agent ─────────────────────────────
+    if agent_system_prompt:
+        if llm_messages and llm_messages[0]["role"] == "system":
+            # Fusionner : system prompt agent + résumé existant
+            llm_messages[0]["content"] = agent_system_prompt + "\n\n" + llm_messages[0]["content"]
+        else:
+            llm_messages.insert(0, {"role": "system", "content": agent_system_prompt})
+
+    # Injection RAG : gated par effective_rag et provider autorisé
     rag_sources: list[str] = []
-    if req.message.strip() and req.provider_id in RAG_ALLOWED_PROVIDERS:
+    rag_allowed = effective_rag and effective_provider in RAG_ALLOWED_PROVIDERS
+    if req.message.strip() and rag_allowed:
         try:
             from rag import build_rag_context, search
             rag_chunks = search(req.message)
@@ -378,21 +568,20 @@ async def chat_stream(
                         llm_messages.insert(0, {"role": "system", "content": rag_ctx})
         except Exception:
             pass
-    elif req.message.strip() and req.provider_id not in RAG_ALLOWED_PROVIDERS:
-        # Log discret — pas d'erreur envoyée au client, le chat continue sans RAG
-        print(f"[RAG] Ignoré pour provider '{req.provider_id}' (non autorisé)")
+    elif req.message.strip() and not rag_allowed:
+        print(f"[RAG] Ignoré pour provider '{effective_provider}' (non autorisé ou désactivé)")
 
     # Handle image generation models
-    if is_image_model(req.model_id):
+    if is_image_model(effective_model):
         async def image_event_stream():
             try:
                 yield f"data: {json.dumps({'type': 'image_loading'})}\n\n"
-                image_content = await generate_image(req.message, req.model_id, req.provider_id)
+                image_content = await generate_image(req.message, effective_model, effective_provider)
                 assistant_msg = Message(
                     conversation_id=conv.id,
                     role="assistant",
                     content=image_content,
-                    model_id=req.model_id,
+                    model_id=effective_model,
                     is_image=True,
                 )
                 db.add(assistant_msg)
@@ -412,11 +601,10 @@ async def chat_stream(
     async def text_event_stream():
         full_response = []
         try:
-            # Signal RAG si des sources ont été utilisées
             if rag_sources:
                 yield f"data: {json.dumps({'type': 'rag_used', 'sources': rag_sources})}\n\n"
 
-            async for chunk in stream_chat(llm_messages, req.model_id, req.provider_id):
+            async for chunk in stream_chat(llm_messages, effective_model, effective_provider):
                 full_response.append(chunk)
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
 
@@ -425,18 +613,14 @@ async def chat_stream(
                 conversation_id=conv.id,
                 role="assistant",
                 content=final_content,
-                model_id=req.model_id,
+                model_id=effective_model,
             )
             db.add(assistant_msg)
             db.commit()
 
-            # Génération du titre après la première réponse
             if is_first_message:
                 first_text = req.message or (file_names[0] if file_names else "Fichier")
-                # Utilise le modèle courant, ou Ollama si dispo comme fallback léger
-                title_model = req.model_id
-                title_provider = req.provider_id
-                title = await generate_conversation_title(first_text, title_model, title_provider)
+                title = await generate_conversation_title(first_text, effective_model, effective_provider)
                 conv.title = title
                 db.commit()
                 yield f"data: {json.dumps({'type': 'title', 'title': title})}\n\n"
@@ -446,10 +630,10 @@ async def chat_stream(
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     # ── Connecteurs actifs : boucle function-calling ──────────────────────
-    if req.active_connectors:
+    if effective_connectors:
         connector_tokens: dict[str, dict] = {}
         all_tools: list[dict] = []
-        for cid in req.active_connectors:
+        for cid in effective_connectors:
             row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == cid).first()
             if not row:
                 continue
@@ -465,9 +649,9 @@ async def chat_stream(
                 if rag_sources:
                     yield f"data: {json.dumps({'type': 'rag_used', 'sources': rag_sources})}\n\n"
 
-                for _turn in range(5):
+                for _turn in range(effective_max_turns):
                     result = await stream_chat_with_tools(
-                        current_messages, req.model_id, req.provider_id, all_tools
+                        current_messages, effective_model, effective_provider, all_tools
                     )
                     if result["type"] == "text":
                         text = result["content"]
@@ -511,13 +695,13 @@ async def chat_stream(
                             })
 
                 final_content = "".join(full_response)
-                assistant_msg = Message(conversation_id=conv.id, role="assistant", content=final_content, model_id=req.model_id)
+                assistant_msg = Message(conversation_id=conv.id, role="assistant", content=final_content, model_id=effective_model)
                 db.add(assistant_msg)
                 db.commit()
 
                 if is_first_message:
                     first_text = req.message or (file_names[0] if file_names else "Fichier")
-                    title = await generate_conversation_title(first_text, req.model_id, req.provider_id)
+                    title = await generate_conversation_title(first_text, effective_model, effective_provider)
                     conv.title = title
                     db.commit()
                     yield f"data: {json.dumps({'type': 'title', 'title': title})}\n\n"
