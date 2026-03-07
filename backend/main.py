@@ -1,7 +1,7 @@
 import os
 import json
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 # Load environments
@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from database import get_db, create_tables, Conversation, Message, ConnectorToken, Agent, engine
+from database import get_db, create_tables, Conversation, Message, ConnectorToken, Agent, UserPreferences, engine
 from auth import verify_token, check_credentials, create_token
 from llm_client import stream_chat, stream_chat_with_tools, generate_image, summarize_messages, fetch_available_models, is_image_model
 from rag import index_document, list_documents, delete_document, build_rag_context
@@ -52,6 +52,33 @@ def _migrate_add_agent_id():
             conn.commit()
 
 
+def _migrate_add_reference_urls():
+    """Ajoute la colonne reference_urls à agents si elle n'existe pas."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(agents)"))]
+        if "reference_urls" not in cols:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN reference_urls TEXT DEFAULT '[]'"))
+            conn.commit()
+
+
+def _migrate_add_user_preferences():
+    """Crée la table user_preferences si elle n'existe pas (migration SQLite)."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username VARCHAR(100) NOT NULL UNIQUE,
+                model_id VARCHAR(200),
+                provider_id VARCHAR(50),
+                connectors TEXT DEFAULT '[]',
+                updated_at DATETIME
+            )
+        """))
+        conn.commit()
+
+
 def _seed_default_agents():
     """Insère les agents par défaut si la table agents est vide."""
     from default_agents import DEFAULT_AGENTS
@@ -70,6 +97,8 @@ def _seed_default_agents():
 def startup():
     create_tables()
     _migrate_add_agent_id()
+    _migrate_add_reference_urls()
+    _migrate_add_user_preferences()
     _seed_default_agents()
 
 
@@ -91,6 +120,7 @@ class AgentCreate(BaseModel):
     connectors: List[str] = []
     rag_enabled: bool = False
     max_tool_turns: int = 5
+    reference_urls: List[str] = []
 
 
 class AgentUpdate(BaseModel):
@@ -103,6 +133,7 @@ class AgentUpdate(BaseModel):
     connectors: Optional[List[str]] = None
     rag_enabled: Optional[bool] = None
     max_tool_turns: Optional[int] = None
+    reference_urls: Optional[List[str]] = None
 
 
 class ConversationCreate(BaseModel):
@@ -161,7 +192,38 @@ def get_providers_route(user: str = Depends(verify_token)):
 # ---------------------------------------------------------------------------
 # Agent routes
 # ---------------------------------------------------------------------------
+def _validate_connectors_json(connectors_list: List[str]) -> str:
+    """Valide et sérialise une liste de connecteurs en JSON."""
+    if not isinstance(connectors_list, list):
+        raise ValueError("Les connecteurs doivent être une liste")
+    for c in connectors_list:
+        if not isinstance(c, str):
+            raise ValueError("Chaque connecteur doit être une string")
+    try:
+        return json.dumps(connectors_list)
+    except Exception as e:
+        raise ValueError(f"Erreur sérialisation JSON des connecteurs: {str(e)}")
+
+
 def _agent_to_dict(a: Agent) -> dict:
+    # Désérialisation sécurisée des connecteurs avec fallback
+    try:
+        connectors = json.loads(a.connectors) if a.connectors else []
+        if not isinstance(connectors, list):
+            connectors = []
+    except json.JSONDecodeError:
+        print(f"[WARNING] JSON invalide pour connecteurs de l'agent {a.id}, utilisation de []")
+        connectors = []
+
+    # Désérialisation sécurisée des reference_urls avec fallback
+    try:
+        reference_urls = json.loads(a.reference_urls) if a.reference_urls else []
+        if not isinstance(reference_urls, list):
+            reference_urls = []
+    except json.JSONDecodeError:
+        print(f"[WARNING] JSON invalide pour reference_urls de l'agent {a.id}, utilisation de []")
+        reference_urls = []
+
     return {
         "id": a.id,
         "name": a.name,
@@ -170,10 +232,11 @@ def _agent_to_dict(a: Agent) -> dict:
         "system_prompt": a.system_prompt or "",
         "model_id": a.model_id or "",
         "provider_id": a.provider_id or "",
-        "connectors": json.loads(a.connectors) if a.connectors else [],
+        "connectors": connectors,
         "rag_enabled": a.rag_enabled,
         "is_default": a.is_default,
         "max_tool_turns": a.max_tool_turns or 5,
+        "reference_urls": reference_urls,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else None,
     }
@@ -187,6 +250,12 @@ def list_agents(db: Session = Depends(get_db), user: str = Depends(verify_token)
 
 @app.post("/api/agents", status_code=201)
 def create_agent(body: AgentCreate, db: Session = Depends(get_db), user: str = Depends(verify_token)):
+    try:
+        connectors_json = _validate_connectors_json(body.connectors)
+        reference_urls_json = _validate_connectors_json(body.reference_urls)  # Réutilise la même validation pour les URLs
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     agent = Agent(
         name=body.name,
         description=body.description,
@@ -194,10 +263,11 @@ def create_agent(body: AgentCreate, db: Session = Depends(get_db), user: str = D
         system_prompt=body.system_prompt,
         model_id=body.model_id,
         provider_id=body.provider_id,
-        connectors=json.dumps(body.connectors),
+        connectors=connectors_json,
         rag_enabled=body.rag_enabled,
         is_default=False,
         max_tool_turns=body.max_tool_turns,
+        reference_urls=reference_urls_json,
     )
     db.add(agent)
     db.commit()
@@ -218,12 +288,18 @@ def update_agent(agent_id: int, body: AgentUpdate, db: Session = Depends(get_db)
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent introuvable")
+
     for field, value in body.model_dump(exclude_unset=True).items():
-        if field == "connectors":
-            setattr(agent, field, json.dumps(value))
+        if field in ("connectors", "reference_urls"):
+            try:
+                validated_json = _validate_connectors_json(value)
+                setattr(agent, field, validated_json)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         else:
             setattr(agent, field, value)
-    agent.updated_at = datetime.utcnow()
+
+    agent.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(agent)
     return _agent_to_dict(agent)
@@ -290,11 +366,15 @@ def create_conversation(
     db: Session = Depends(get_db),
     user: str = Depends(verify_token),
 ):
-    if body.agent_id is not None:
+    # Validation stricte de l'agent_id (doit exister et être > 0)
+    if body.agent_id is not None and body.agent_id > 0:
         agent = db.query(Agent).filter(Agent.id == body.agent_id).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent introuvable")
-    conv = Conversation(title=body.title, agent_id=body.agent_id)
+    elif body.agent_id is not None and body.agent_id <= 0:
+        raise HTTPException(status_code=400, detail="ID d'agent invalide")
+
+    conv = Conversation(title=body.title, agent_id=body.agent_id if body.agent_id and body.agent_id > 0 else None)
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -341,7 +421,7 @@ def update_conversation(
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation introuvable")
     conv.title = body.title
-    conv.updated_at = datetime.utcnow()
+    conv.updated_at = datetime.now(timezone.utc)
     db.commit()
     return {"id": conv.id, "title": conv.title}
 
@@ -495,13 +575,53 @@ async def chat_stream(
     agent = None
     if conv.agent_id:
         agent = db.query(Agent).filter(Agent.id == conv.agent_id).first()
+        # Si l'agent a été supprimé mais la conversation référence encore l'agent_id
+        if not agent:
+            # Log et clear l'agent_id de la conversation pour éviter les futures erreurs
+            print(f"[WARNING] Agent {conv.agent_id} introuvable pour conversation {conv.id}, agent_id sera supprimé")
+            conv.agent_id = None
+            db.commit()
 
-    effective_model = req.model_id if req.model_id else (agent.model_id if agent else "openai/gpt-4o-mini")
-    effective_provider = req.provider_id if req.provider_id else (agent.provider_id if agent else "openrouter")
-    effective_connectors = req.active_connectors if req.active_connectors else (json.loads(agent.connectors) if agent and agent.connectors else [])
-    effective_rag = agent.rag_enabled if agent else (effective_provider in RAG_ALLOWED_PROVIDERS)
-    effective_max_turns = agent.max_tool_turns if agent else 5
-    agent_system_prompt = agent.system_prompt if agent and agent.system_prompt else None
+    # Résolution des paramètres effectifs avec fallback
+    agent_reference_urls = []
+    if agent:
+        effective_model = req.model_id if req.model_id else (agent.model_id or "openai/gpt-4o-mini")
+        effective_provider = req.provider_id if req.provider_id else (agent.provider_id or "openrouter")
+
+        # Désérialisation sécurisée des connecteurs
+        try:
+            agent_connectors = json.loads(agent.connectors) if agent.connectors else []
+            if not isinstance(agent_connectors, list):
+                agent_connectors = []
+        except json.JSONDecodeError:
+            print(f"[WARNING] JSON connecteurs invalide pour agent {agent.id}, utilisation de []")
+            agent_connectors = []
+
+        # Désérialisation sécurisée des reference_urls
+        try:
+            agent_reference_urls = json.loads(agent.reference_urls) if agent.reference_urls else []
+            if not isinstance(agent_reference_urls, list):
+                agent_reference_urls = []
+        except json.JSONDecodeError:
+            print(f"[WARNING] JSON reference_urls invalide pour agent {agent.id}, utilisation de []")
+            agent_reference_urls = []
+
+        # Auto-activation du connecteur web_search si l'agent a des URLs de référence
+        if agent_reference_urls and "web_search" not in agent_connectors:
+            agent_connectors.append("web_search")
+
+        effective_connectors = req.active_connectors if req.active_connectors else agent_connectors
+        effective_rag = agent.rag_enabled
+        effective_max_turns = agent.max_tool_turns or 5
+        agent_system_prompt = agent.system_prompt if agent.system_prompt else None
+    else:
+        # Pas d'agent : utiliser les paramètres de la requête ou les defaults
+        effective_model = req.model_id or "openai/gpt-4o-mini"
+        effective_provider = req.provider_id or "openrouter"
+        effective_connectors = req.active_connectors
+        effective_rag = effective_provider in RAG_ALLOWED_PROVIDERS
+        effective_max_turns = 5
+        agent_system_prompt = None
 
     # Save user message
     file_names = [f.name for f in req.files]
@@ -519,7 +639,7 @@ async def chat_stream(
     db.commit()
 
     # Update conversation timestamp + auto-titre sur le premier message
-    conv.updated_at = datetime.utcnow()
+    conv.updated_at = datetime.now(timezone.utc)
     is_first_message = len(conv.messages) <= 1 and conv.title == "Nouvelle conversation"
     db.commit()
 
@@ -532,8 +652,10 @@ async def chat_stream(
         try:
             conv.summary = await summarize_messages(msgs_for_summary)
             db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Log l'erreur mais continue le chat (fallback : pas de résumé)
+            print(f"[ERROR] Échec de la summarization pour conversation {conv.id}: {str(e)}")
+            # TODO: implémenter un fallback avec résumé simplifié (concaténation des N derniers messages)
 
     # Build context then inject multimodal content for last user message
     llm_messages = build_llm_context(all_messages, conv.summary)
@@ -633,19 +755,40 @@ async def chat_stream(
     if effective_connectors:
         connector_tokens: dict[str, dict] = {}
         all_tools: list[dict] = []
+        connector_warnings: list[str] = []
+
         for cid in effective_connectors:
+            connector_def = get_connector(cid)
+            if not connector_def:
+                print(f"[WARNING] Connecteur {cid} introuvable dans le registre")
+                continue
+
+            # Cas spécial : web_search ne nécessite pas d'OAuth, utilise les reference_urls
+            if cid == "web_search":
+                if agent_reference_urls:
+                    connector_tokens[cid] = {"allowed_urls": agent_reference_urls}
+                    all_tools.extend(connector_def["tools"]())
+                else:
+                    connector_warnings.append("Connecteur 'web_search' activé mais aucune URL de référence configurée.")
+                continue
+
+            # Autres connecteurs : nécessitent un token OAuth
             row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == cid).first()
             if not row:
+                connector_warnings.append(f"Connecteur '{cid}' non authentifié. Veuillez vous connecter.")
+                print(f"[WARNING] Connecteur {cid} ignoré : non authentifié")
                 continue
             connector_tokens[cid] = json.loads(row.token_json)
-            connector_def = get_connector(cid)
-            if connector_def:
-                all_tools.extend(connector_def["tools"]())
+            all_tools.extend(connector_def["tools"]())
 
         async def tool_event_stream():
             full_response = []
             current_messages = list(llm_messages)
             try:
+                # Envoyer les warnings de connecteurs non authentifiés
+                for warning in connector_warnings:
+                    yield f"data: {json.dumps({'type': 'warning', 'message': warning})}\n\n"
+
                 if rag_sources:
                     yield f"data: {json.dumps({'type': 'rag_used', 'sources': rag_sources})}\n\n"
 
@@ -807,7 +950,7 @@ def save_connector_token(
     row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == connector_id).first()
     if row:
         row.token_json = body.token_json
-        row.updated_at = datetime.utcnow()
+        row.updated_at = datetime.now(timezone.utc)
     else:
         row = ConnectorToken(connector_id=connector_id, token_json=body.token_json)
         db.add(row)
@@ -853,13 +996,13 @@ async def google_calendar_oauth_callback(
             raise HTTPException(status_code=400, detail=f"Erreur OAuth Google : {resp.text}")
         tok = resp.json()
 
-    tok["expires_at"] = datetime.utcnow().timestamp() + tok.get("expires_in", 3600)
+    tok["expires_at"] = datetime.now(timezone.utc).timestamp() + tok.get("expires_in", 3600)
     token_json = json.dumps(tok)
 
     row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == "google_calendar").first()
     if row:
         row.token_json = token_json
-        row.updated_at = datetime.utcnow()
+        row.updated_at = datetime.now(timezone.utc)
     else:
         row = ConnectorToken(connector_id="google_calendar", token_json=token_json)
         db.add(row)
