@@ -73,6 +73,7 @@ def _migrate_add_user_preferences():
                 model_id VARCHAR(200),
                 provider_id VARCHAR(50),
                 connectors TEXT DEFAULT '[]',
+                created_at DATETIME,
                 updated_at DATETIME
             )
         """))

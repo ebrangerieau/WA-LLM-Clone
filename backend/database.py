@@ -86,6 +86,7 @@ class UserPreferences(Base):
     model_id    = Column(String(200), nullable=True)
     provider_id = Column(String(50), nullable=True)
     connectors  = Column(Text, default="[]")   # JSON array de connector IDs
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                          onupdate=lambda: datetime.now(timezone.utc))
 
