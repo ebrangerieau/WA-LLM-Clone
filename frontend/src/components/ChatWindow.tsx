@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Send, Paperclip, X, FileText, ArrowLeft, Mic, MicOff, Plug } from "lucide-react";
-import { fetchMessages, streamChat, ChatMessage, fetchRagDocuments } from "@/lib/api";
+import { fetchMessages, streamChat, ChatMessage, fetchRagDocuments, fetchConversation, Agent } from "@/lib/api";
 import MessageBubble, { StreamingBubble } from "./MessageBubble";
 import ModelSelector from "./ModelSelector";
 import ProviderSelector from "./ProviderSelector";
@@ -54,10 +54,25 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
   const [activeConnectors, setActiveConnectors] = useState<string[]>([]);
   const [connectorRefresh, setConnectorRefresh] = useState(0);
   const [showConnectorsPanel, setShowConnectorsPanel] = useState(false);
+  const [agent, setAgent] = useState<Agent | null>(null);
 
   useEffect(() => {
     fetchRagDocuments().then((docs) => setRagDocsCount(docs.length)).catch(() => { });
   }, []);
+
+  // Charger les détails de la conversation (agent inclus) quand la conversation change
+  useEffect(() => {
+    setAgent(null);
+    if (!conversationId) return;
+    fetchConversation(conversationId)
+      .then((detail) => {
+        if (detail.agent) setAgent(detail.agent);
+      })
+      .catch((e: unknown) => {
+        console.error("Erreur chargement agent:", e);
+        setError("Impossible de charger les détails de la conversation");
+      });
+  }, [conversationId]);
   const [stream, setStream] = useState<StreamState>({ active: false, content: "", isImageLoading: false, toolCalls: [] });
   const [error, setError] = useState<string | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
@@ -177,7 +192,11 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
       let isImage = false;
       let pendingRagSources: string[] = [];
 
-      for await (const event of streamChat(conversationId, userInput, model, provider, filePayloads, activeConnectors)) {
+      const chatModel = agent ? "" : model;
+      const chatProvider = agent ? "" : provider;
+      const chatConnectors = agent ? [] : activeConnectors;
+
+      for await (const event of streamChat(conversationId, userInput, chatModel, chatProvider, filePayloads, chatConnectors)) {
         if (abortRef.current) break;
 
         if (event.type === "chunk") {
@@ -195,6 +214,10 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
           });
         } else if (event.type === "rag_used") {
           pendingRagSources = event.sources;
+        } else if (event.type === "warning") {
+          // Afficher le warning temporairement
+          setError(event.message);
+          setTimeout(() => setError(null), 5000);
         } else if (event.type === "image_loading") {
           setStream((s) => ({ ...s, active: true, content: "", isImageLoading: true }));
           isImage = true;
@@ -239,7 +262,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
 
   if (!conversationId) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-[#e5ddd5]">
+      <div className="flex-1 flex items-center justify-center bg-[#fafaf9]">
         <div className="text-center text-gray-500">
           <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-[#075e54]/10 flex items-center justify-center">
             <span className="text-4xl">💬</span>
@@ -252,50 +275,67 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#e5ddd5]">
+    <div className="flex-1 flex flex-col h-full bg-[#fafaf9]">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-[#075e54] shadow-md z-10">
+      <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 shadow-sm z-10">
         {onBack && (
-          <button onClick={onBack} className="text-white p-1 -ml-1 rounded-full hover:bg-white/10">
+          <button onClick={onBack} className="text-gray-500 p-1 -ml-1 rounded-full hover:bg-gray-100">
             <ArrowLeft size={20} />
           </button>
         )}
-        <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-sm">M</div>
-        <div className="flex-1">
-          <p className="text-white font-semibold text-sm">Mia</p>
-          <p className="text-white/70 text-xs">en ligne</p>
+        <div className="w-8 h-8 rounded-full bg-[#075e54] flex items-center justify-center text-white font-bold text-sm">
+          {agent ? agent.icon : "M"}
         </div>
-        <ProviderSelector selectedProvider={provider} onSelect={(p) => { setProvider(p); }} ragActive={ragDocsCount > 0} />
-        <ModelSelector selectedModel={model} selectedProvider={provider} onSelect={setModel} />
-        <button
-          onClick={() => setShowConnectorsPanel(true)}
-          title="Gérer les connecteurs"
-          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${activeConnectors.length > 0
-              ? "bg-amber-400 hover:bg-amber-300 text-white"
-              : "bg-white/10 hover:bg-white/20 text-white"
-            }`}
-        >
-          <Plug size={15} />
-        </button>
+        <div className="flex-1">
+          <p className="text-gray-900 font-semibold text-sm">{agent ? agent.name : "Mia"}</p>
+          <p className="text-gray-400 text-xs">
+            {agent ? `${agent.provider_id} / ${agent.model_id?.split("/").pop() || "—"}` : "Assistant IA"}
+          </p>
+        </div>
+        {!agent && (
+          <>
+            <ProviderSelector selectedProvider={provider} onSelect={(p) => { setProvider(p); }} ragActive={ragDocsCount > 0} />
+            <ModelSelector selectedModel={model} selectedProvider={provider} onSelect={setModel} />
+            <button
+              onClick={() => setShowConnectorsPanel(true)}
+              title="Gérer les connecteurs"
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${activeConnectors.length > 0
+                  ? "bg-[#075e54]/10 hover:bg-[#075e54]/20 text-[#075e54]"
+                  : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                }`}
+            >
+              <Plug size={15} />
+            </button>
+          </>
+        )}
+        {agent && (
+          <div className="flex items-center gap-1.5">
+            {agent.rag_enabled && (
+              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                RAG
+              </span>
+            )}
+            {agent.connectors.length > 0 && (
+              <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                {agent.connectors.length} connecteur{agent.connectors.length > 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Messages area */}
-      <div
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-0.5"
-        style={{
-          backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23bdb9b4' fill-opacity='0.15'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")",
-        }}
-      >
+      <div className="flex-1 overflow-y-auto py-6 space-y-0">
         {messages.length === 0 && !stream.active && (
-          <div className="text-center py-8">
-            <p className="text-gray-500 text-sm bg-white/50 inline-block px-4 py-2 rounded-full">Début de la conversation</p>
+          <div className="text-center py-12">
+            <p className="text-gray-400 text-sm">Début de la conversation</p>
           </div>
         )}
         {messages.map((msg) => <MessageBubble key={msg.id} message={msg} />)}
         {stream.active && (
           <>
             {stream.toolCalls.length > 0 && (
-              <div className="flex flex-col gap-1 mb-1 pl-2">
+              <div className="flex flex-col gap-1 mb-1 pl-11">
                 {stream.toolCalls.map((tc, i) => (
                   <div key={i} className="flex items-center gap-2 text-xs text-gray-500 bg-white/70 rounded-full px-3 py-1 w-fit shadow-sm border border-gray-200">
                     {tc.status === "running" ? (
@@ -321,7 +361,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
 
       {/* File previews */}
       {attachedFiles.length > 0 && (
-        <div className="px-3 pt-2 pb-1 bg-[#f0f0f0] flex flex-wrap gap-2">
+        <div className="px-3 pt-2 pb-1 bg-white border-t border-gray-100 flex flex-wrap gap-2">
           {attachedFiles.map((af, i) => (
             <div key={i} className="relative flex items-center gap-2 bg-white rounded-xl px-3 py-2 shadow-sm border border-gray-200 max-w-[200px]">
               {af.type === "image" && af.preview ? (
@@ -347,31 +387,35 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
       )}
 
       {/* Input area */}
-      <div className="px-3 py-3 bg-[#f0f0f0] border-t border-gray-200">
-        <div className="flex items-end gap-2">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={stream.active}
-            className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-white shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40"
-            title="Joindre un fichier"
-          >
-            <Paperclip size={18} className="text-gray-500" />
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.html,.css"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          <ConnectorSelector
-            activeConnectors={activeConnectors}
-            onChange={setActiveConnectors}
-            refreshTrigger={connectorRefresh}
-          />
+      <div className="px-4 py-4 bg-[#f9f9f9] border-t border-gray-200">
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-end gap-2 bg-white rounded-2xl px-4 py-3 shadow-md border border-gray-200">
+            {/* Bouton fichier */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={stream.active}
+              className="flex-shrink-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-40 mb-0.5"
+              title="Joindre un fichier"
+            >
+              <Paperclip size={18} />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.html,.css"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            {!agent && (
+              <ConnectorSelector
+                activeConnectors={activeConnectors}
+                onChange={setActiveConnectors}
+                refreshTrigger={connectorRefresh}
+              />
+            )}
 
-          <div className="flex-1 bg-white rounded-3xl px-4 py-2.5 shadow-sm flex items-end gap-2 min-h-[48px]">
+            {/* Textarea */}
             <textarea
               ref={textareaRef}
               value={input}
@@ -383,42 +427,44 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
               onKeyDown={handleKeyDown}
               placeholder={
                 isListening
-                  ? "🎙️ En écoute…"
+                  ? "En écoute…"
                   : attachedFiles.length > 0
                     ? "Ajouter un message (optionnel)…"
-                    : "Écrire un message..."
+                    : "Envoyer un message à Mia..."
               }
               rows={1}
               disabled={stream.active}
-              className={`flex-1 bg-transparent outline-none resize-none text-sm text-gray-800 placeholder-gray-400 max-h-[120px] overflow-y-auto py-0.5 ${isListening ? "placeholder-red-400" : ""
+              className={`flex-1 bg-transparent outline-none resize-none text-sm text-gray-800 placeholder-gray-400 max-h-[120px] overflow-y-auto py-1 ${isListening ? "placeholder-red-400" : ""
                 }`}
             />
-            {/* Bouton micro — dans la bulle de saisie */}
+
+            {/* Bouton micro */}
             {isSupported && (
               <button
                 onClick={toggleMic}
                 disabled={stream.active}
                 title={isListening ? "Arrêter la dictée" : "Dicter un message"}
-                className={`flex-shrink-0 mb-0.5 p-1.5 rounded-full transition-all ${isListening
+                className={`flex-shrink-0 p-1.5 rounded-lg transition-all mb-0.5 ${isListening
                   ? "bg-red-500 text-white animate-pulse"
-                  : "text-gray-400 hover:text-[#075e54] hover:bg-gray-100"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
                   }`}
               >
                 {isListening ? <MicOff size={16} /> : <Mic size={16} />}
               </button>
             )}
-          </div>
 
-          <button
-            onClick={sendMessage}
-            disabled={(!input.trim() && attachedFiles.length === 0) || stream.active}
-            className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${(input.trim() || attachedFiles.length > 0) && !stream.active
-              ? "bg-[#075e54] hover:bg-[#054d45] shadow-md"
-              : "bg-gray-300"
-              }`}
-          >
-            <Send size={18} className={(input.trim() || attachedFiles.length > 0) && !stream.active ? "text-white" : "text-gray-400"} />
-          </button>
+            {/* Bouton envoi */}
+            <button
+              onClick={sendMessage}
+              disabled={(!input.trim() && attachedFiles.length === 0) || stream.active}
+              className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all mb-0.5 ${(input.trim() || attachedFiles.length > 0) && !stream.active
+                ? "bg-[#075e54] hover:bg-[#054d45] shadow-sm"
+                : "bg-gray-100 cursor-not-allowed"
+                }`}
+            >
+              <Send size={16} className={(input.trim() || attachedFiles.length > 0) && !stream.active ? "text-white" : "text-gray-300"} />
+            </button>
+          </div>
         </div>
       </div>
 
