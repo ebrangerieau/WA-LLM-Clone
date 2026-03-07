@@ -184,6 +184,13 @@ def login(req: LoginRequest):
     return {"access_token": token, "token_type": "bearer"}
 
 
+def _parse_connectors(raw: str | None) -> list:
+    try:
+        return json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Preferences routes
 # ---------------------------------------------------------------------------
@@ -202,14 +209,10 @@ def get_preferences(
             provider_id=_DEFAULT_PROVIDER,
             connectors=[],
         )
-    try:
-        connectors = json.loads(prefs.connectors or "[]")
-    except json.JSONDecodeError:
-        connectors = []
     return PreferencesResponse(
         model_id=prefs.model_id or _DEFAULT_MODEL,
         provider_id=prefs.provider_id or _DEFAULT_PROVIDER,
-        connectors=connectors,
+        connectors=_parse_connectors(prefs.connectors),
     )
 
 
@@ -226,12 +229,20 @@ def update_preferences(
     if len(req.connectors) > 20:
         raise HTTPException(status_code=400, detail="Trop de connecteurs")
 
+    known_connectors = set(CONNECTOR_REGISTRY.keys())
+    for cid in req.connectors:
+        if not isinstance(cid, str) or not cid.strip():
+            raise HTTPException(status_code=400, detail="ID de connecteur invalide")
+        if cid not in known_connectors:
+            raise HTTPException(status_code=400, detail=f"Connecteur inconnu : {cid}")
+
     prefs = db.query(UserPreferences).filter(UserPreferences.username == username).first()
     if prefs:
         prefs.model_id    = req.model_id
         prefs.provider_id = req.provider_id
         prefs.connectors  = json.dumps(req.connectors)
         prefs.updated_at  = datetime.now(timezone.utc)
+        db.commit()
     else:
         prefs = UserPreferences(
             username    = username,
@@ -240,16 +251,23 @@ def update_preferences(
             connectors  = json.dumps(req.connectors),
         )
         db.add(prefs)
-    db.commit()
-    db.refresh(prefs)
-    try:
-        connectors = json.loads(prefs.connectors or "[]")
-    except json.JSONDecodeError:
-        connectors = []
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            # Race condition : une autre requête a créé la ligne entre-temps, on met à jour
+            prefs = db.query(UserPreferences).filter(UserPreferences.username == username).first()
+            if prefs:
+                prefs.model_id    = req.model_id
+                prefs.provider_id = req.provider_id
+                prefs.connectors  = json.dumps(req.connectors)
+                prefs.updated_at  = datetime.now(timezone.utc)
+                db.commit()
+
     return PreferencesResponse(
-        model_id=prefs.model_id,
-        provider_id=prefs.provider_id,
-        connectors=connectors,
+        model_id=req.model_id,
+        provider_id=req.provider_id,
+        connectors=req.connectors,
     )
 
 
