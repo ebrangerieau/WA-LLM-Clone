@@ -70,8 +70,10 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
 
   // Charger les préférences utilisateur depuis le serveur au montage
   useEffect(() => {
+    let cancelled = false;
     fetchPreferences()
       .then((prefs) => {
+        if (cancelled) return;
         setModel(prefs.model_id);
         setProvider(prefs.provider_id);
         setActiveConnectors(prefs.connectors);
@@ -82,6 +84,14 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
       .catch(() => {
         // Silencieux : garde les valeurs localStorage en fallback
       });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Cleanup du timer debounce au démontage
+  useEffect(() => {
+    return () => {
+      if (savePrefsTimerRef.current) clearTimeout(savePrefsTimerRef.current);
+    };
   }, []);
 
   // Charger les détails de la conversation (agent inclus) quand la conversation change
