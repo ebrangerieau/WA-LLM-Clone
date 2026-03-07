@@ -162,6 +162,17 @@ class ChatRequest(BaseModel):
     active_connectors: List[str] = []   # liste d'IDs de connecteurs activés pour ce message
 
 
+class PreferencesResponse(BaseModel):
+    model_id: str
+    provider_id: str
+    connectors: List[str]
+
+class PreferencesUpdate(BaseModel):
+    model_id: str
+    provider_id: str
+    connectors: List[str]
+
+
 # ---------------------------------------------------------------------------
 # Auth routes
 # ---------------------------------------------------------------------------
@@ -171,6 +182,75 @@ def login(req: LoginRequest):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Identifiants invalides")
     token = create_token(req.username)
     return {"access_token": token, "token_type": "bearer"}
+
+
+# ---------------------------------------------------------------------------
+# Preferences routes
+# ---------------------------------------------------------------------------
+_DEFAULT_MODEL    = "openai/gpt-4o-mini"
+_DEFAULT_PROVIDER = "openrouter"
+
+@app.get("/api/preferences", response_model=PreferencesResponse)
+def get_preferences(
+    username: str = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    prefs = db.query(UserPreferences).filter(UserPreferences.username == username).first()
+    if not prefs:
+        return PreferencesResponse(
+            model_id=_DEFAULT_MODEL,
+            provider_id=_DEFAULT_PROVIDER,
+            connectors=[],
+        )
+    try:
+        connectors = json.loads(prefs.connectors or "[]")
+    except json.JSONDecodeError:
+        connectors = []
+    return PreferencesResponse(
+        model_id=prefs.model_id or _DEFAULT_MODEL,
+        provider_id=prefs.provider_id or _DEFAULT_PROVIDER,
+        connectors=connectors,
+    )
+
+
+@app.put("/api/preferences", response_model=PreferencesResponse)
+def update_preferences(
+    req: PreferencesUpdate,
+    username: str = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    if len(req.model_id) > 200:
+        raise HTTPException(status_code=400, detail="model_id trop long")
+    if len(req.provider_id) > 50:
+        raise HTTPException(status_code=400, detail="provider_id trop long")
+    if len(req.connectors) > 20:
+        raise HTTPException(status_code=400, detail="Trop de connecteurs")
+
+    prefs = db.query(UserPreferences).filter(UserPreferences.username == username).first()
+    if prefs:
+        prefs.model_id    = req.model_id
+        prefs.provider_id = req.provider_id
+        prefs.connectors  = json.dumps(req.connectors)
+        prefs.updated_at  = datetime.now(timezone.utc)
+    else:
+        prefs = UserPreferences(
+            username    = username,
+            model_id    = req.model_id,
+            provider_id = req.provider_id,
+            connectors  = json.dumps(req.connectors),
+        )
+        db.add(prefs)
+    db.commit()
+    db.refresh(prefs)
+    try:
+        connectors = json.loads(prefs.connectors or "[]")
+    except json.JSONDecodeError:
+        connectors = []
+    return PreferencesResponse(
+        model_id=prefs.model_id,
+        provider_id=prefs.provider_id,
+        connectors=connectors,
+    )
 
 
 # ---------------------------------------------------------------------------
