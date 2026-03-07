@@ -9,7 +9,7 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------------
-// Markdown renderer minimal — pas de dépendance externe
+// Markdown renderer minimal
 // ---------------------------------------------------------------------------
 function renderMarkdown(text: string): React.ReactNode[] {
   const lines = text.split("\n");
@@ -19,7 +19,6 @@ function renderMarkdown(text: string): React.ReactNode[] {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Bloc de code ```
     if (line.startsWith("```")) {
       const lang = line.slice(3).trim();
       const codeLines: string[] = [];
@@ -38,7 +37,6 @@ function renderMarkdown(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Titres
     if (line.startsWith("### ")) {
       nodes.push(<h3 key={i} className="font-bold text-sm mt-2 mb-0.5">{inlineMarkdown(line.slice(4))}</h3>);
       i++; continue;
@@ -52,7 +50,6 @@ function renderMarkdown(text: string): React.ReactNode[] {
       i++; continue;
     }
 
-    // Liste à puces
     if (line.match(/^[-*•] /)) {
       const items: string[] = [];
       while (i < lines.length && lines[i].match(/^[-*•] /)) {
@@ -69,7 +66,6 @@ function renderMarkdown(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Liste numérotée
     if (line.match(/^\d+\. /)) {
       const items: string[] = [];
       while (i < lines.length && lines[i].match(/^\d+\. /)) {
@@ -86,13 +82,11 @@ function renderMarkdown(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Ligne horizontale
     if (line.match(/^---+$/)) {
       nodes.push(<hr key={i} className="border-gray-200 my-2" />);
       i++; continue;
     }
 
-    // Blockquote
     if (line.startsWith("> ")) {
       nodes.push(
         <blockquote key={i} className="border-l-2 border-gray-300 pl-3 text-gray-600 italic text-sm my-1">
@@ -102,13 +96,11 @@ function renderMarkdown(text: string): React.ReactNode[] {
       i++; continue;
     }
 
-    // Ligne vide
     if (line.trim() === "") {
       nodes.push(<div key={i} className="h-1" />);
       i++; continue;
     }
 
-    // Paragraphe normal
     nodes.push(
       <p key={i} className="text-sm leading-relaxed">
         {inlineMarkdown(line)}
@@ -120,38 +112,30 @@ function renderMarkdown(text: string): React.ReactNode[] {
   return nodes;
 }
 
-// Inline markdown : **bold**, *italic*, `code`, ~~strike~~
 function inlineMarkdown(text: string): React.ReactNode {
   const parts: React.ReactNode[] = [];
-  // Regex qui capture les patterns inline dans l'ordre de priorité
   const regex = /(\*\*(.+?)\*\*)|(\*(.+?)\*)|(`(.+?)`)|~~(.+?)~~|(__(.+?)__)/g;
   let last = 0;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
-    // Texte avant le match
     if (match.index > last) {
       parts.push(text.slice(last, match.index));
     }
 
     if (match[1]) {
-      // **bold**
       parts.push(<strong key={match.index} className="font-semibold">{match[2]}</strong>);
     } else if (match[3]) {
-      // *italic*
       parts.push(<em key={match.index}>{match[4]}</em>);
     } else if (match[5]) {
-      // `code`
       parts.push(
         <code key={match.index} className="bg-black/10 px-1 py-0.5 rounded text-xs font-mono">
           {match[6]}
         </code>
       );
     } else if (match[7]) {
-      // ~~strike~~
       parts.push(<del key={match.index}>{match[7]}</del>);
     } else if (match[8]) {
-      // __bold__
       parts.push(<strong key={match.index} className="font-semibold">{match[9]}</strong>);
     }
 
@@ -198,7 +182,6 @@ export default function MessageBubble({ message }: Props) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback pour navigateurs sans clipboard API
       const el = document.createElement("textarea");
       el.value = message.content;
       document.body.appendChild(el);
@@ -210,33 +193,46 @@ export default function MessageBubble({ message }: Props) {
     }
   };
 
+  // Message utilisateur — bulle droite verte
+  if (isUser) {
+    return (
+      <div className="flex justify-end mb-4 px-4">
+        <div className="max-w-[65%] bg-[#075e54] text-white rounded-2xl rounded-br-none px-4 py-2.5 shadow-sm">
+          <div className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</div>
+          <div className="flex items-center justify-end gap-1 mt-1">
+            <span className="text-[10px] text-white/60 whitespace-nowrap">
+              {new Date(message.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+            </span>
+            <CheckCheck size={12} className="text-white/60 flex-shrink-0" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Message IA — pleine largeur avec avatar
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-1`}>
-      <div
-        className={`relative max-w-[75%] sm:max-w-[65%] rounded-2xl px-3 py-2 shadow-sm ${isUser
-            ? "bg-[#dcf8c6] text-gray-800 rounded-br-sm"
-            : "bg-white text-gray-800 rounded-bl-sm"
-          }`}
-      >
+    <div className="flex gap-3 mb-6 px-4">
+      {/* Avatar */}
+      <div className="w-8 h-8 rounded-full bg-[#075e54] flex-shrink-0 flex items-center justify-center text-white font-bold text-sm mt-0.5">
+        M
+      </div>
+      {/* Contenu */}
+      <div className="flex-1 min-w-0">
         {/* Image */}
         {message.is_image && !imgError ? (
           isImageUrl(message.content) || isBase64Image(message.content) ? (
-            <img
-              src={message.content}
-              alt="Generated"
-              className="max-w-full rounded-lg"
-              onError={() => setImgError(true)}
-            />
+            <img src={message.content} alt="Generated" className="max-w-full rounded-xl shadow-sm" onError={() => setImgError(true)} />
           ) : (
-            <div className="text-sm">{renderMarkdown(message.content)}</div>
+            <div className="text-sm text-gray-800">{renderMarkdown(message.content)}</div>
           )
         ) : (
-          <div className="text-sm">{renderMarkdown(message.content)}</div>
+          <div className="text-sm text-gray-800 leading-relaxed">{renderMarkdown(message.content)}</div>
         )}
 
         {/* RAG badge */}
         {hasRag && (
-          <div className="mt-2">
+          <div className="mt-3">
             <button
               onClick={() => setRagOpen((o) => !o)}
               className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors text-emerald-700 text-[10px] font-medium"
@@ -250,7 +246,7 @@ export default function MessageBubble({ message }: Props) {
                 {message.rag_sources!.map((src, i) => (
                   <li key={i} className="flex items-center gap-1.5 text-[10px] text-emerald-600">
                     <span className="w-1 h-1 rounded-full bg-emerald-400 flex-shrink-0" />
-                    <span className="truncate max-w-[200px]" title={src}>{src}</span>
+                    <span className="truncate max-w-[300px]" title={src}>{src}</span>
                   </li>
                 ))}
               </ul>
@@ -258,30 +254,21 @@ export default function MessageBubble({ message }: Props) {
           </div>
         )}
 
-        {/* Meta */}
-        <div className={`flex items-center gap-1 mt-1 ${isUser ? "justify-end" : "justify-start"}`}>
-          {!isUser && (
-            <button
-              onClick={handleCopy}
-              title="Copier le message"
-              className="p-0.5 rounded hover:bg-black/5 transition-colors text-gray-400 hover:text-gray-600"
-            >
-              {copied
-                ? <Check size={12} className="text-green-500" />
-                : <Copy size={12} />
-              }
-            </button>
+        {/* Meta : copier + modèle + heure */}
+        <div className="flex items-center gap-2 mt-2">
+          <button
+            onClick={handleCopy}
+            title="Copier le message"
+            className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
+          >
+            {copied ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+          </button>
+          {modelLabel && (
+            <span className="text-[11px] text-gray-400 truncate max-w-[140px]">{modelLabel}</span>
           )}
-          {modelLabel && !isUser && (
-            <span className="text-[10px] text-gray-400 truncate max-w-[120px]">{modelLabel}</span>
-          )}
-          <span className="text-[10px] text-gray-400 ml-auto whitespace-nowrap">
-            {new Date(message.created_at).toLocaleTimeString("fr-FR", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+          <span className="text-[11px] text-gray-400 ml-auto whitespace-nowrap">
+            {new Date(message.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
           </span>
-          {isUser && <CheckCheck size={12} className="text-[#4fc3f7] flex-shrink-0" />}
         </div>
       </div>
     </div>
@@ -299,19 +286,22 @@ export function StreamingBubble({
   isImageLoading?: boolean;
 }) {
   return (
-    <div className="flex justify-start mb-1">
-      <div className="relative max-w-[75%] sm:max-w-[65%] bg-white text-gray-800 rounded-2xl rounded-bl-sm px-3 py-2 shadow-sm">
+    <div className="flex gap-3 mb-6 px-4">
+      <div className="w-8 h-8 rounded-full bg-[#075e54] flex-shrink-0 flex items-center justify-center text-white font-bold text-sm mt-0.5">
+        M
+      </div>
+      <div className="flex-1 min-w-0">
         {isImageLoading ? (
-          <div className="flex items-center gap-2 py-4 px-6 text-gray-500 text-sm">
+          <div className="flex items-center gap-2 text-gray-500 text-sm">
             <Loader2 size={16} className="animate-spin" />
             <span>Génération de l&apos;image…</span>
           </div>
         ) : (
-          <div className="text-sm">
+          <div className="text-sm text-gray-800 leading-relaxed">
             {content ? (
               renderMarkdown(content)
             ) : (
-              <span className="flex gap-1 items-center">
+              <span className="flex gap-1 items-center h-5">
                 <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
                 <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
                 <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
