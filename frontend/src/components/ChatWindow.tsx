@@ -377,6 +377,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
               </div>
               <button
                 onClick={() => removeFile(i)}
+                aria-label="Retirer le fichier"
                 className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-500 rounded-full flex items-center justify-center hover:bg-red-500 transition-colors"
               >
                 <X size={10} className="text-white" />
@@ -434,7 +435,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
               }
               rows={1}
               disabled={stream.active}
-              className={`flex-1 bg-transparent outline-none resize-none text-sm text-gray-800 placeholder-gray-400 max-h-[120px] overflow-y-auto py-1 ${isListening ? "placeholder-red-400" : ""
+              className={`flex-1 bg-transparent outline-none resize-none text-sm text-gray-800 max-h-[120px] overflow-y-auto py-1 ${isListening ? "placeholder-red-400" : "placeholder-gray-400"
                 }`}
             />
 
