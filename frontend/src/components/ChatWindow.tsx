@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Send, Paperclip, X, FileText, ArrowLeft, Mic, MicOff, Plug } from "lucide-react";
-import { fetchMessages, streamChat, ChatMessage, fetchRagDocuments, fetchConversation, Agent } from "@/lib/api";
+import { fetchMessages, streamChat, ChatMessage, fetchRagDocuments, fetchConversation, Agent, fetchPreferences, savePreferences } from "@/lib/api";
 import MessageBubble, { StreamingBubble } from "./MessageBubble";
 import ModelSelector from "./ModelSelector";
 import ProviderSelector from "./ProviderSelector";
@@ -12,6 +12,12 @@ import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
 const DEFAULT_PROVIDER = "openrouter";
+
+const STORAGE_KEYS = {
+  model: "mia_selected_model",
+  provider: "mia_selected_provider",
+  connectors: "mia_active_connectors",
+} as const;
 
 interface Props {
   conversationId: number | null;
@@ -48,16 +54,34 @@ function formatSize(bytes: number): string {
 export default function ChatWindow({ conversationId, onBack, onNewMessage }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [model, setModel] = useState(DEFAULT_MODEL);
-  const [provider, setProvider] = useState(DEFAULT_PROVIDER);
+  const [model, setModel] = useState(() => localStorage.getItem(STORAGE_KEYS.model) ?? DEFAULT_MODEL);
+  const [provider, setProvider] = useState(() => localStorage.getItem(STORAGE_KEYS.provider) ?? DEFAULT_PROVIDER);
   const [ragDocsCount, setRagDocsCount] = useState(0);
-  const [activeConnectors, setActiveConnectors] = useState<string[]>([]);
+  const [activeConnectors, setActiveConnectors] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.connectors) ?? "[]"); } catch { return []; }
+  });
   const [connectorRefresh, setConnectorRefresh] = useState(0);
   const [showConnectorsPanel, setShowConnectorsPanel] = useState(false);
   const [agent, setAgent] = useState<Agent | null>(null);
 
   useEffect(() => {
     fetchRagDocuments().then((docs) => setRagDocsCount(docs.length)).catch(() => { });
+  }, []);
+
+  // Charger les préférences utilisateur depuis le serveur au montage
+  useEffect(() => {
+    fetchPreferences()
+      .then((prefs) => {
+        setModel(prefs.model_id);
+        setProvider(prefs.provider_id);
+        setActiveConnectors(prefs.connectors);
+        localStorage.setItem(STORAGE_KEYS.model, prefs.model_id);
+        localStorage.setItem(STORAGE_KEYS.provider, prefs.provider_id);
+        localStorage.setItem(STORAGE_KEYS.connectors, JSON.stringify(prefs.connectors));
+      })
+      .catch(() => {
+        // Silencieux : garde les valeurs localStorage en fallback
+      });
   }, []);
 
   // Charger les détails de la conversation (agent inclus) quand la conversation change
@@ -80,6 +104,7 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<boolean>(false);
+  const savePrefsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interimRef = useRef<string>("");  // stocke le transcript intérimaire
 
   const { isListening, isSupported, toggle: toggleMic } = useSpeechRecognition({
@@ -106,6 +131,13 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
       setInput((prev) => prev.trimEnd() + " ");
     },
   });
+
+  const debouncedSavePrefs = useCallback((prefs: { model_id: string; provider_id: string; connectors: string[] }) => {
+    if (savePrefsTimerRef.current) clearTimeout(savePrefsTimerRef.current);
+    savePrefsTimerRef.current = setTimeout(() => {
+      savePreferences(prefs).catch(() => {/* silencieux */});
+    }, 500);
+  }, []);
 
   const loadMessages = useCallback(async () => {
     if (!conversationId) return;
@@ -294,8 +326,16 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
         </div>
         {!agent && (
           <>
-            <ProviderSelector selectedProvider={provider} onSelect={(p) => { setProvider(p); }} ragActive={ragDocsCount > 0} />
-            <ModelSelector selectedModel={model} selectedProvider={provider} onSelect={setModel} />
+            <ProviderSelector selectedProvider={provider} onSelect={(p) => {
+              setProvider(p);
+              localStorage.setItem(STORAGE_KEYS.provider, p);
+              debouncedSavePrefs({ model_id: model, provider_id: p, connectors: activeConnectors });
+            }} ragActive={ragDocsCount > 0} />
+            <ModelSelector selectedModel={model} selectedProvider={provider} onSelect={(m) => {
+              setModel(m);
+              localStorage.setItem(STORAGE_KEYS.model, m);
+              debouncedSavePrefs({ model_id: m, provider_id: provider, connectors: activeConnectors });
+            }} />
             <button
               onClick={() => setShowConnectorsPanel(true)}
               title="Gérer les connecteurs"
@@ -411,7 +451,11 @@ export default function ChatWindow({ conversationId, onBack, onNewMessage }: Pro
             {!agent && (
               <ConnectorSelector
                 activeConnectors={activeConnectors}
-                onChange={setActiveConnectors}
+                onChange={(c) => {
+                  setActiveConnectors(c);
+                  localStorage.setItem(STORAGE_KEYS.connectors, JSON.stringify(c));
+                  debouncedSavePrefs({ model_id: model, provider_id: provider, connectors: c });
+                }}
                 refreshTrigger={connectorRefresh}
               />
             )}
