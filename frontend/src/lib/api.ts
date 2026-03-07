@@ -86,6 +86,7 @@ export interface Agent {
   rag_enabled: boolean;
   is_default: boolean;
   max_tool_turns: number;
+  reference_urls: string[];
   created_at: string | null;
   updated_at: string | null;
 }
@@ -264,6 +265,7 @@ export type StreamEvent =
   | { type: "title"; title: string }
   | { type: "rag_used"; sources: string[] }
   | { type: "tool_call"; tool: string; status: string; result_summary?: string }
+  | { type: "warning"; message: string }
   | { type: "error"; message: string };
 
 export interface FilePayload {
@@ -309,25 +311,55 @@ export async function* streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const raw = line.slice(6).trim();
-        if (!raw) continue;
-        try {
-          const event: StreamEvent = JSON.parse(raw);
-          yield event;
-        } catch {
-          // ignore malformed lines
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          try {
+            const event: StreamEvent = JSON.parse(raw);
+            yield event;
+          } catch {
+            // ignore malformed lines
+          }
         }
       }
     }
+  } finally {
+    reader.cancel().catch(() => {});  // Assurer la fermeture du lecteur
   }
+}
+
+// ------------------------------------------------------------------
+// Preferences
+// ------------------------------------------------------------------
+export interface UserPreferences {
+  model_id: string;
+  provider_id: string;
+  connectors: string[];
+}
+
+export async function fetchPreferences(): Promise<UserPreferences> {
+  const res = await fetch(`${API_BASE}/api/preferences`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Erreur chargement préférences");
+  return res.json();
+}
+
+export async function savePreferences(prefs: UserPreferences): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/preferences`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(prefs),
+  });
+  if (!res.ok) throw new Error("Erreur sauvegarde préférences");
 }
