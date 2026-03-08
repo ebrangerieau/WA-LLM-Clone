@@ -27,23 +27,36 @@ export default function Home() {
   const handleSelectConv = (id: number) => {
     setSelectedConv(id);
     // On mobile: hide sidebar when a conversation is selected
-    setShowSidebar(false);
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setShowSidebar(false);
+    }
+  };
+
+  const toggleSidebar = () => {
+    setShowSidebar((prev) => !prev);
+  };
+
+  const handleBack = () => {
+    setSelectedConv(null);
+    setShowSidebar(true);
   };
 
   return (
-    <div className="h-screen flex overflow-hidden">
+    <div className="h-screen flex overflow-hidden bg-[#111b21]">
       {/* Sidebar */}
       <div
         className={`
-          ${showSidebar ? "flex" : "hidden"}
-          md:flex
-          w-full md:w-80 lg:w-96
+          ${showSidebar ? "w-full md:w-80 lg:w-96 border-r" : "w-0 border-r-0"}
+          ${!showSidebar && "md:w-0"}
+          transition-all duration-300 ease-in-out
           flex-shrink-0
-          border-r border-[#3b4a54]
+          border-[#3b4a54]
+          z-20
+          overflow-hidden
+          relative
         `}
-        style={{ maxWidth: showSidebar && !selectedConv ? "100%" : undefined }}
       >
-        <div className="w-full">
+        <div className="w-full md:w-80 lg:w-96 h-full">
           <Sidebar
             selectedId={selectedConv}
             onSelect={handleSelectConv}
@@ -59,11 +72,14 @@ export default function Home() {
           md:flex
           flex-1 flex-col
           overflow-hidden
+          relative
         `}
       >
         <ChatWindow
           conversationId={selectedConv}
-          onBack={() => setShowSidebar(true)}
+          isSidebarOpen={showSidebar}
+          onToggleSidebar={toggleSidebar}
+          onBack={handleBack}
           onNewMessage={() => setRefreshTrigger((n) => n + 1)}
         />
       </div>

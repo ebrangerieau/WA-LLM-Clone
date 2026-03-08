@@ -63,7 +63,7 @@ def _migrate_add_reference_urls():
 
 
 def _migrate_add_user_preferences():
-    """Crée la table user_preferences si elle n'existe pas (migration SQLite)."""
+    """Crée la table user_preferences si elle n'existe pas ou ajoute les colonnes manquantes."""
     from sqlalchemy import text
     with engine.connect() as conn:
         conn.execute(text("""
@@ -71,12 +71,23 @@ def _migrate_add_user_preferences():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username VARCHAR(100) NOT NULL UNIQUE,
                 model_id VARCHAR(200),
+                text_model_id VARCHAR(200),
+                image_model_id VARCHAR(200),
+                research_model_id VARCHAR(200),
+                allowed_text_models TEXT DEFAULT '[]',
+                allowed_image_models TEXT DEFAULT '[]',
+                allowed_research_models TEXT DEFAULT '[]',
                 provider_id VARCHAR(50),
                 connectors TEXT DEFAULT '[]',
                 created_at DATETIME,
                 updated_at DATETIME
             )
         """))
+        # Migration pour ajouter les colonnes si la table existe déjà sans elles
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(user_preferences)"))]
+        for col in ["text_model_id", "image_model_id", "research_model_id", "allowed_text_models", "allowed_image_models", "allowed_research_models"]:
+            if col not in cols:
+                conn.execute(text(f"ALTER TABLE user_preferences ADD COLUMN {col} VARCHAR(200)"))
         conn.commit()
 
 
@@ -158,17 +169,35 @@ class ChatRequest(BaseModel):
     message: str
     model_id: str
     provider_id: str = "openrouter"
+    text_model_id: Optional[str] = None
+    text_provider_id: Optional[str] = None
+    image_model_id: Optional[str] = None
+    image_provider_id: Optional[str] = None
+    research_model_id: Optional[str] = None
+    research_provider_id: Optional[str] = None
     files: List[FilePayload] = []
-    active_connectors: List[str] = []   # liste d'IDs de connecteurs activés pour ce message
+    active_connectors: List[str] = []
 
 
 class PreferencesResponse(BaseModel):
     model_id: str
+    text_model_id: Optional[str] = None
+    image_model_id: Optional[str] = None
+    research_model_id: Optional[str] = None
+    allowed_text_models: List[str] = []
+    allowed_image_models: List[str] = []
+    allowed_research_models: List[str] = []
     provider_id: str
     connectors: List[str]
 
 class PreferencesUpdate(BaseModel):
-    model_id: str
+    model_id: Optional[str] = None
+    text_model_id: Optional[str] = None
+    image_model_id: Optional[str] = None
+    research_model_id: Optional[str] = None
+    allowed_text_models: Optional[List[str]] = None
+    allowed_image_models: Optional[List[str]] = None
+    allowed_research_models: Optional[List[str]] = None
     provider_id: str
     connectors: List[str]
 
@@ -206,11 +235,23 @@ def get_preferences(
     if not prefs:
         return PreferencesResponse(
             model_id=_DEFAULT_MODEL,
+            text_model_id=_DEFAULT_MODEL,
+            image_model_id="openai/dall-e-3",
+            research_model_id="perplexity/llama-3.1-sonar-large-128k-online",
+            allowed_text_models=[],
+            allowed_image_models=[],
+            allowed_research_models=[],
             provider_id=_DEFAULT_PROVIDER,
             connectors=[],
         )
     return PreferencesResponse(
         model_id=prefs.model_id or _DEFAULT_MODEL,
+        text_model_id=prefs.text_model_id or prefs.model_id or _DEFAULT_MODEL,
+        image_model_id=prefs.image_model_id or "openai/dall-e-3",
+        research_model_id=prefs.research_model_id or "perplexity/llama-3.1-sonar-large-128k-online",
+        allowed_text_models=_parse_connectors(prefs.allowed_text_models),
+        allowed_image_models=_parse_connectors(prefs.allowed_image_models),
+        allowed_research_models=_parse_connectors(prefs.allowed_research_models),
         provider_id=prefs.provider_id or _DEFAULT_PROVIDER,
         connectors=_parse_connectors(prefs.connectors),
     )
@@ -222,8 +263,14 @@ def update_preferences(
     username: str = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    if len(req.model_id) > 200:
+    if req.model_id and len(req.model_id) > 200:
         raise HTTPException(status_code=400, detail="model_id trop long")
+    if req.text_model_id and len(req.text_model_id) > 200:
+        raise HTTPException(status_code=400, detail="text_model_id trop long")
+    if req.image_model_id and len(req.image_model_id) > 200:
+        raise HTTPException(status_code=400, detail="image_model_id trop long")
+    if req.research_model_id and len(req.research_model_id) > 200:
+        raise HTTPException(status_code=400, detail="research_model_id trop long")
     if len(req.provider_id) > 50:
         raise HTTPException(status_code=400, detail="provider_id trop long")
     if len(req.connectors) > 20:
@@ -238,7 +285,13 @@ def update_preferences(
 
     prefs = db.query(UserPreferences).filter(UserPreferences.username == username).first()
     if prefs:
-        prefs.model_id    = req.model_id
+        if req.model_id: prefs.model_id = req.model_id
+        if req.text_model_id: prefs.text_model_id = req.text_model_id
+        if req.image_model_id: prefs.image_model_id = req.image_model_id
+        if req.research_model_id: prefs.research_model_id = req.research_model_id
+        if req.allowed_text_models is not None: prefs.allowed_text_models = json.dumps(req.allowed_text_models)
+        if req.allowed_image_models is not None: prefs.allowed_image_models = json.dumps(req.allowed_image_models)
+        if req.allowed_research_models is not None: prefs.allowed_research_models = json.dumps(req.allowed_research_models)
         prefs.provider_id = req.provider_id
         prefs.connectors  = json.dumps(req.connectors)
         prefs.updated_at  = datetime.now(timezone.utc)
@@ -246,7 +299,13 @@ def update_preferences(
     else:
         prefs = UserPreferences(
             username    = username,
-            model_id    = req.model_id,
+            model_id    = req.model_id or req.text_model_id or _DEFAULT_MODEL,
+            text_model_id = req.text_model_id or req.model_id or _DEFAULT_MODEL,
+            image_model_id = req.image_model_id or "openai/dall-e-3",
+            research_model_id = req.research_model_id or "perplexity/llama-3.1-sonar-large-128k-online",
+            allowed_text_models = json.dumps(req.allowed_text_models or []),
+            allowed_image_models = json.dumps(req.allowed_image_models or []),
+            allowed_research_models = json.dumps(req.allowed_research_models or []),
             provider_id = req.provider_id,
             connectors  = json.dumps(req.connectors),
         )
@@ -255,18 +314,30 @@ def update_preferences(
             db.commit()
         except Exception:
             db.rollback()
-            # Race condition : une autre requête a créé la ligne entre-temps, on met à jour
+            # Race condition
             prefs = db.query(UserPreferences).filter(UserPreferences.username == username).first()
             if prefs:
-                prefs.model_id    = req.model_id
+                if req.model_id: prefs.model_id = req.model_id
+                if req.text_model_id: prefs.text_model_id = req.text_model_id
+                if req.image_model_id: prefs.image_model_id = req.image_model_id
+                if req.research_model_id: prefs.research_model_id = req.research_model_id
+                if req.allowed_text_models is not None: prefs.allowed_text_models = json.dumps(req.allowed_text_models)
+                if req.allowed_image_models is not None: prefs.allowed_image_models = json.dumps(req.allowed_image_models)
+                if req.allowed_research_models is not None: prefs.allowed_research_models = json.dumps(req.allowed_research_models)
                 prefs.provider_id = req.provider_id
                 prefs.connectors  = json.dumps(req.connectors)
                 prefs.updated_at  = datetime.now(timezone.utc)
                 db.commit()
 
     return PreferencesResponse(
-        model_id=req.model_id,
-        provider_id=req.provider_id,
+        model_id=prefs.model_id,
+        text_model_id=prefs.text_model_id,
+        image_model_id=prefs.image_model_id,
+        research_model_id=prefs.research_model_id,
+        allowed_text_models=_parse_connectors(prefs.allowed_text_models),
+        allowed_image_models=_parse_connectors(prefs.allowed_image_models),
+        allowed_research_models=_parse_connectors(prefs.allowed_research_models),
+        provider_id=prefs.provider_id,
         connectors=req.connectors,
     )
 
@@ -660,6 +731,52 @@ def build_llm_context(messages: List[Message], summary: Optional[str]) -> List[d
 # ---------------------------------------------------------------------------
 # Chat (SSE streaming)
 # ---------------------------------------------------------------------------
+def get_intent_and_clean_message(message: str, active_connectors: List[str]):
+    """Détecte l'intention via tags ou contenu et retourne le message nettoyé."""
+    m = message.strip()
+    intent = {"is_image": False, "is_research": False, "clean_message": m}
+
+    # 1. Détection par tags (prioritaire) - Supporte "/image", "/image ", "/image:", "/img", etc.
+    m_lower = m.lower()
+    
+    # Tags Image
+    for tag in ["/image", "/img"]:
+        if m_lower.startswith(tag):
+            intent["is_image"] = True
+            # On retire le tag et les éventuels séparateurs (: ou espace)
+            rest = m[len(tag):].lstrip()
+            if rest.startswith(":"):
+                rest = rest[1:].lstrip()
+            intent["clean_message"] = rest
+            return intent
+            
+    # Tags Recherche
+    for tag in ["/search", "/recherche", "/web"]:
+        if m_lower.startswith(tag):
+            intent["is_research"] = True
+            rest = m[len(tag):].lstrip()
+            if rest.startswith(":"):
+                rest = rest[1:].lstrip()
+            intent["clean_message"] = rest
+            return intent
+
+    # 2. Détection par connecteurs actifs
+    if any(c in active_connectors for c in ["web_search", "perplexity_search", "web_browsing"]):
+        intent["is_research"] = True
+        return intent
+
+    # 3. Détection par analyse naturelle (fallback)
+    image_keywords = ["image", "dessin", "photo", "illustration", "picture", "draw"]
+    action_keywords = ["fait", "fais", "génère", "genere", "crée", "cree", "dessine", "generate", "create", "draw"]
+    p = m.lower()
+    if p.startswith(("dessine ", "trace ", "draw ")):
+        intent["is_image"] = True
+    elif any(kw in p for kw in action_keywords) and any(kw in p for kw in image_keywords):
+        intent["is_image"] = True
+
+    return intent
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(
     req: ChatRequest,
@@ -670,22 +787,38 @@ async def chat_stream(
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation introuvable")
 
-    # ── Résolution agent ──────────────────────────────────────────────────
+    # ── Résolution intention et modèle ──────────────────────────────────
+    intent_data = get_intent_and_clean_message(req.message, req.active_connectors)
+    is_image = intent_data["is_image"]
+    is_research = intent_data["is_research"]
+    clean_message = intent_data["clean_message"]
+    
+    print(f"[DEBUG] RECV - Message: '{req.message[:40]}...'")
+    print(f"[DEBUG] RECV - Models: Text={req.text_model_id}, Image={req.image_model_id}, Research={req.research_model_id}")
+    print(f"[DEBUG] INTENT - Image={is_image}, Research={is_research}, CleanMsg='{clean_message[:30]}...'")
+    
+    if is_image and req.image_model_id:
+        effective_model = req.image_model_id
+        effective_provider = req.image_provider_id or req.provider_id
+        print(f"[DEBUG] ROUTE -> IMAGE using {effective_model}")
+    elif is_research and req.research_model_id:
+        effective_model = req.research_model_id
+        effective_provider = req.research_provider_id or req.provider_id
+        print(f"[DEBUG] ROUTE -> RESEARCH using {effective_model}")
+    else:
+        effective_model = req.text_model_id or req.model_id or "openai/gpt-4o-mini"
+        effective_provider = req.text_provider_id or req.provider_id
+        print(f"[DEBUG] ROUTE -> TEXT using {effective_model}")
+
+    # ── Résolution agent (override si présent) ──────────────────────────
     agent = None
     if conv.agent_id:
         agent = db.query(Agent).filter(Agent.id == conv.agent_id).first()
-        # Si l'agent a été supprimé mais la conversation référence encore l'agent_id
-        if not agent:
-            # Log et clear l'agent_id de la conversation pour éviter les futures erreurs
-            print(f"[WARNING] Agent {conv.agent_id} introuvable pour conversation {conv.id}, agent_id sera supprimé")
-            conv.agent_id = None
-            db.commit()
-
-    # Résolution des paramètres effectifs avec fallback
-    agent_reference_urls = []
-    if agent:
-        effective_model = req.model_id if req.model_id else (agent.model_id or "openai/gpt-4o-mini")
-        effective_provider = req.provider_id if req.provider_id else (agent.provider_id or "openrouter")
+        if agent:
+            # L'agent force son propre modèle s'il est défini, sauf si un tag explicite est utilisé
+            if not (is_image or is_research):
+                effective_model = agent.model_id or effective_model
+                effective_provider = agent.provider_id or effective_provider
 
         # Désérialisation sécurisée des connecteurs
         try:
@@ -714,9 +847,13 @@ async def chat_stream(
         effective_max_turns = agent.max_tool_turns or 5
         agent_system_prompt = agent.system_prompt if agent.system_prompt else None
     else:
-        # Pas d'agent : utiliser les paramètres de la requête ou les defaults
-        effective_model = req.model_id or "openai/gpt-4o-mini"
-        effective_provider = req.provider_id or "openrouter"
+        # Pas d'agent : effective_model et effective_provider sont déjà définis
+        # selon l'intention (image / recherche / texte) — ne pas les écraser ici.
+        # On les assure avec un fallback si manquants (ne devrait pas arriver).
+        if not effective_model:
+            effective_model = req.model_id or "openai/gpt-4o-mini"
+        if not effective_provider:
+            effective_provider = req.provider_id or "openrouter"
         effective_connectors = req.active_connectors
         effective_rag = effective_provider in RAG_ALLOWED_PROVIDERS
         effective_max_turns = 5
@@ -758,7 +895,9 @@ async def chat_stream(
 
     # Build context then inject multimodal content for last user message
     llm_messages = build_llm_context(all_messages, conv.summary)
-    user_content = build_user_content(req.message, req.files)
+    
+    # On utilise clean_message (sans le tag /image ou /search) pour le contenu envoyé au LLM
+    user_content = build_user_content(clean_message, req.files)
     if llm_messages and llm_messages[-1]["role"] == "user":
         llm_messages[-1]["content"] = user_content
     else:
@@ -793,23 +932,29 @@ async def chat_stream(
         print(f"[RAG] Ignoré pour provider '{effective_provider}' (non autorisé ou désactivé)")
 
     # Handle image generation models
-    if is_image_model(effective_model):
+    if is_image or is_image_model(effective_model):
+        print(f"[DEBUG] Executing IMAGE generation path with {effective_model}")
         async def image_event_stream():
             try:
                 yield f"data: {json.dumps({'type': 'image_loading'})}\n\n"
-                image_content = await generate_image(req.message, effective_model, effective_provider)
+                # On utilise clean_message pour ne pas envoyer le tag /image au modèle
+                image_content = await generate_image(clean_message, effective_model, effective_provider)
+                if not image_content:
+                    raise Exception("Le modèle a renvoyé un contenu vide")
+                    
                 assistant_msg = Message(
                     conversation_id=conv.id,
                     role="assistant",
-                    content=image_content,
+                    content=str(image_content),
                     model_id=effective_model,
                     is_image=True,
                 )
                 db.add(assistant_msg)
                 db.commit()
-                yield f"data: {json.dumps({'type': 'image', 'content': image_content, 'message_id': assistant_msg.id})}\n\n"
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                yield f"data: {json.dumps({'type': 'image', 'content': image_content, 'message_id': assistant_msg.id, 'model_id': effective_model})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'model_id': effective_model})}\n\n"
             except Exception as e:
+                print(f"[ERROR] Image generation failed: {str(e)}")
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
         return StreamingResponse(
@@ -846,7 +991,7 @@ async def chat_stream(
                 db.commit()
                 yield f"data: {json.dumps({'type': 'title', 'title': title})}\n\n"
 
-            yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id, 'rag_sources': rag_sources})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id, 'rag_sources': rag_sources, 'model_id': effective_model})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -862,13 +1007,18 @@ async def chat_stream(
                 print(f"[WARNING] Connecteur {cid} introuvable dans le registre")
                 continue
 
-            # Cas spécial : web_search ne nécessite pas d'OAuth, utilise les reference_urls
+            # Cas spéciaux : connecteurs ne nécessitant pas d'OAuth
             if cid == "web_search":
                 if agent_reference_urls:
                     connector_tokens[cid] = {"allowed_urls": agent_reference_urls}
                     all_tools.extend(connector_def["tools"]())
                 else:
                     connector_warnings.append("Connecteur 'web_search' activé mais aucune URL de référence configurée.")
+                continue
+            
+            if cid == "perplexity_search":
+                connector_tokens[cid] = {}  # pas de token nécessaire
+                all_tools.extend(connector_def["tools"]())
                 continue
 
             # Autres connecteurs : nécessitent un token OAuth
@@ -948,7 +1098,7 @@ async def chat_stream(
                     db.commit()
                     yield f"data: {json.dumps({'type': 'title', 'title': title})}\n\n"
 
-                yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id, 'rag_sources': rag_sources})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id, 'rag_sources': rag_sources, 'model_id': effective_model})}\n\n"
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -1021,12 +1171,18 @@ def list_connectors_route(db: Session = Depends(get_db), user: str = Depends(ver
     """Liste tous les connecteurs disponibles avec leur statut d'authentification."""
     result = []
     for meta in list_connectors():
+        # Si le connecteur ne nécessite pas d'OAuth, il est considéré comme "connecté" par défaut
+        if not meta.get("requires_oauth", False):
+            result.append({**meta, "connected": True})
+            continue
+
         row = db.query(ConnectorToken).filter(ConnectorToken.connector_id == meta["id"]).first()
         result.append({
             **meta,
-            "connected": row is not None,
+            "connected": bool(row)
         })
     return result
+
 
 
 @app.get("/api/connectors/{connector_id}/tools")

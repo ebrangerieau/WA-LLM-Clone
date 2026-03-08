@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(npx --prefix D:/developpement/mia/frontend next lint:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}

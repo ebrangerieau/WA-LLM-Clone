@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCheck, Copy, Check, Loader2, BookOpen, ChevronDown, ChevronUp } from "lucide-react";
+import { CheckCheck, Copy, Check, Loader2, BookOpen, ChevronDown, ChevronUp, X, Download, ZoomIn } from "lucide-react";
 import { ChatMessage } from "@/lib/api";
+
 
 interface Props {
   message: ChatMessage;
@@ -156,8 +157,13 @@ function isImageUrl(content: string): boolean {
   return (
     content.startsWith("http") &&
     (content.includes(".jpg") || content.includes(".png") ||
-      content.includes(".webp") || content.includes("oaidalleapiprodscus") ||
-      content.includes("replicate.delivery"))
+      content.includes(".webp") || content.includes(".gif") ||
+      content.includes("oaidalleapiprodscus") ||
+      content.includes("replicate.delivery") ||
+      content.includes("fal.media") ||
+      content.includes("fal.run") ||
+      content.includes("cdn.openai.com") ||
+      content.includes("storage.googleapis.com"))
   );
 }
 
@@ -166,11 +172,97 @@ function isBase64Image(content: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// ImageLightbox — modale plein écran
+// ---------------------------------------------------------------------------
+function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const handleDownload = () => {
+    if (src.startsWith("http")) {
+      window.open(src, "_blank", "noopener,noreferrer");
+    } else {
+      const a = document.createElement("a");
+      a.href = src;
+      a.download = `mia-image-${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-w-4xl max-h-full flex flex-col items-center gap-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 self-end">
+          <button
+            onClick={handleDownload}
+            title="Télécharger l'image"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs transition-colors border border-white/20"
+          >
+            <Download size={13} />
+            Télécharger
+          </button>
+          <button
+            onClick={onClose}
+            title="Fermer"
+            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/20"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <img
+          src={src}
+          alt="Image générée"
+          className="max-w-full max-h-[80vh] rounded-xl shadow-2xl object-contain"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ImageThumbnail — vignette cliquable
+// ---------------------------------------------------------------------------
+function ImageThumbnail({ src }: { src: string }) {
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  if (imgError) {
+    return <p className="text-xs text-red-500 italic">Impossible de charger l&apos;image</p>;
+  }
+
+  return (
+    <>
+      <div
+        className="relative group inline-block cursor-pointer"
+        onClick={() => setLightboxOpen(true)}
+      >
+        <img
+          src={src}
+          alt="Image générée"
+          className="max-w-[320px] max-h-[320px] rounded-xl shadow-sm object-cover transition-transform group-hover:scale-[1.02]"
+          onError={() => setImgError(true)}
+        />
+        <div className="absolute inset-0 rounded-xl bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+          <ZoomIn size={28} className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+        </div>
+      </div>
+      {lightboxOpen && (
+        <ImageLightbox src={src} onClose={() => setLightboxOpen(false)} />
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // MessageBubble
 // ---------------------------------------------------------------------------
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
-  const [imgError, setImgError] = useState(false);
   const [copied, setCopied] = useState(false);
   const [ragOpen, setRagOpen] = useState(false);
   const modelLabel = message.model_id?.split("/").pop();
@@ -210,6 +302,9 @@ export default function MessageBubble({ message }: Props) {
     );
   }
 
+  // Détecter si c'est une image à afficher en vignette
+  const isImageContent = message.is_image && (isImageUrl(message.content) || isBase64Image(message.content));
+
   // Message IA — pleine largeur avec avatar
   return (
     <div className="flex gap-3 mb-6 px-4">
@@ -219,13 +314,11 @@ export default function MessageBubble({ message }: Props) {
       </div>
       {/* Contenu */}
       <div className="flex-1 min-w-0">
-        {/* Image */}
-        {message.is_image && !imgError ? (
-          isImageUrl(message.content) || isBase64Image(message.content) ? (
-            <img src={message.content} alt="Generated" className="max-w-full rounded-xl shadow-sm" onError={() => setImgError(true)} />
-          ) : (
-            <div className="text-sm text-gray-800">{renderMarkdown(message.content)}</div>
-          )
+        {/* Image ou texte */}
+        {isImageContent ? (
+          <ImageThumbnail src={message.content} />
+        ) : message.is_image ? (
+          <div className="text-sm text-gray-800">{renderMarkdown(message.content)}</div>
         ) : (
           <div className="text-sm text-gray-800 leading-relaxed">{renderMarkdown(message.content)}</div>
         )}

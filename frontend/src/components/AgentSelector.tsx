@@ -90,6 +90,11 @@ export default function AgentSelector({ isOpen, onClose, onSelect, onCreateAgent
                           RAG
                         </span>
                       )}
+                      {agent.reference_urls && agent.reference_urls.length > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full" title={agent.reference_urls.join(", ")}>
+                          🌐 Web
+                        </span>
+                      )}
                       {agent.connectors.length > 0 && (
                         <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">
                           <Plug size={8} />

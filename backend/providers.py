@@ -47,6 +47,14 @@ def get_providers() -> list[ProviderConfig]:
             "enabled": bool(os.getenv("DEEPSEEK_API_KEY")),
         },
         {
+            "id": "perplexity",
+            "name": "Perplexity AI",
+            "base_url": "https://api.perplexity.ai",
+            "api_key": os.getenv("PERPLEXITY_API_KEY", ""),
+            "models_endpoint": "/models",
+            "enabled": bool(os.getenv("PERPLEXITY_API_KEY")),
+        },
+        {
             "id": "ollama",
             "name": "Ollama (local)",
             "base_url": os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),

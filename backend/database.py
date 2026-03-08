@@ -83,7 +83,13 @@ class UserPreferences(Base):
 
     id          = Column(Integer, primary_key=True, index=True)
     username    = Column(String(100), nullable=False, unique=True, index=True)
-    model_id    = Column(String(200), nullable=True)
+    model_id    = Column(String(200), nullable=True) # Ancien champ, conservé pour compatibilité temporaire
+    text_model_id = Column(String(200), nullable=True)
+    image_model_id = Column(String(200), nullable=True)
+    research_model_id = Column(String(200), nullable=True)
+    allowed_text_models = Column(Text, default="[]")
+    allowed_image_models = Column(Text, default="[]")
+    allowed_research_models = Column(Text, default="[]")
     provider_id = Column(String(50), nullable=True)
     connectors  = Column(Text, default="[]")   # JSON array de connector IDs
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))

@@ -16,6 +16,7 @@ DEFAULT_AGENTS = [
         "rag_enabled": False,
         "is_default": True,
         "max_tool_turns": 5,
+        "reference_urls": "[]",
     },
     {
         "name": "Coder",
@@ -33,6 +34,7 @@ DEFAULT_AGENTS = [
         "rag_enabled": False,
         "is_default": True,
         "max_tool_turns": 5,
+        "reference_urls": "[]",
     },
     {
         "name": "Rédacteur",
@@ -50,6 +52,7 @@ DEFAULT_AGENTS = [
         "rag_enabled": False,
         "is_default": True,
         "max_tool_turns": 5,
+        "reference_urls": "[]",
     },
     {
         "name": "Analyste RAG",
@@ -67,6 +70,7 @@ DEFAULT_AGENTS = [
         "rag_enabled": True,
         "is_default": True,
         "max_tool_turns": 5,
+        "reference_urls": "[]",
     },
     {
         "name": "Planificateur",
@@ -84,5 +88,24 @@ DEFAULT_AGENTS = [
         "rag_enabled": False,
         "is_default": True,
         "max_tool_turns": 5,
+        "reference_urls": "[]",
+    },
+    {
+        "name": "Juriste Droit du Travail",
+        "description": "Expert en droit du travail français, sources légifrance.gouv.fr",
+        "icon": "⚖️",
+        "system_prompt": (
+            "Tu es un expert en droit du travail français. "
+            "Tu peux rechercher des informations à jour sur le site officiel légifrance.gouv.fr. "
+            "Cite toujours tes sources (articles de loi, code du travail) et reste précis. "
+            "En cas de doute, recommande de consulter un avocat spécialisé."
+        ),
+        "model_id": "openai/gpt-4o-mini",
+        "provider_id": "openrouter",
+        "connectors": '["web_search"]',
+        "rag_enabled": False,
+        "is_default": True,
+        "max_tool_turns": 5,
+        "reference_urls": '["https://www.legifrance.gouv.fr"]',
     },
 ]

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import KnowledgeBase from "./KnowledgeBase";
 import AgentSelector from "./AgentSelector";
 import AgentManager from "./AgentManager";
+import AgentForm from "./AgentForm";
 import {
   MessageSquarePlus,
   Search,
@@ -233,7 +234,7 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
 
       {/* Agent Form (create from selector) */}
       {showAgentForm && (
-        <AgentFormModal
+        <AgentForm
           onClose={() => setShowAgentForm(false)}
           onSaved={() => {
             setShowAgentForm(false);
@@ -243,10 +244,4 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
       )}
     </div>
   );
-}
-
-/* Inline wrapper to lazily import AgentForm */
-function AgentFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const AgentForm = require("./AgentForm").default;
-  return <AgentForm onClose={onClose} onSaved={onSaved} />;
 }

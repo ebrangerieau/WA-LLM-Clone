@@ -15,6 +15,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   openai:     "bg-green-500",
   mistral:    "bg-orange-500",
   deepseek:   "bg-blue-500",
+  perplexity: "bg-cyan-500",
   ollama:     "bg-gray-500",
 };
 
@@ -23,6 +24,7 @@ const PROVIDER_ICONS: Record<string, string> = {
   openai:     "🤖",
   mistral:    "🌬️",
   deepseek:   "🔍",
+  perplexity: "🌐",
   ollama:     "🏠",
 };
 
@@ -49,8 +51,8 @@ export default function ProviderSelector({ selectedProvider, onSelect, ragActive
             : "RAG désactivé — changez vers Ollama ou Mistral pour utiliser la base de connaissances"}
           className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
             ragAllowed
-              ? "bg-green-500/20 text-green-300 border border-green-500/30"
-              : "bg-red-500/20 text-red-300 border border-red-500/30"
+              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+              : "bg-red-50 text-red-600 border border-red-200"
           }`}
         >
           {ragAllowed
@@ -63,7 +65,7 @@ export default function ProviderSelector({ selectedProvider, onSelect, ragActive
 
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
+        className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
         title="Changer de provider"
       >
         <span>{PROVIDER_ICONS[selectedProvider] ?? "🔌"}</span>

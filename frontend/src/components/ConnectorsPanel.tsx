@@ -151,26 +151,28 @@ export default function ConnectorsPanel({ isOpen, onClose, onConnectorChange }: 
 
                                 {/* Action button */}
                                 <div className="flex-shrink-0">
-                                    {actionId === c.id ? (
-                                        <Loader2 size={20} className="text-gray-400 animate-spin" />
-                                    ) : c.connected ? (
-                                        <button
-                                            onClick={() => handleDisconnect(c)}
-                                            title="Déconnecter"
-                                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors"
-                                        >
-                                            <Unplug size={12} />
-                                            Déconnecter
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={() => handleConnect(c)}
-                                            title="Se connecter"
-                                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#075e54] hover:bg-[#054d45] rounded-lg transition-colors shadow-sm"
-                                        >
-                                            <ExternalLink size={12} />
-                                            Connecter
-                                        </button>
+                                    {c.requires_oauth && (
+                                        actionId === c.id ? (
+                                            <Loader2 size={20} className="text-gray-400 animate-spin" />
+                                        ) : c.connected ? (
+                                            <button
+                                                onClick={() => handleDisconnect(c)}
+                                                title="Déconnecter"
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors"
+                                            >
+                                                <Unplug size={12} />
+                                                Déconnecter
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={() => handleConnect(c)}
+                                                title="Se connecter"
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#075e54] hover:bg-[#054d45] rounded-lg transition-colors shadow-sm"
+                                            >
+                                                <ExternalLink size={12} />
+                                                Connecter
+                                            </button>
+                                        )
                                     )}
                                 </div>
                             </div>

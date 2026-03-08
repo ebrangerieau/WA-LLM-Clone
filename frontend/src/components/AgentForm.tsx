@@ -29,6 +29,8 @@ export default function AgentForm({ agent, onClose, onSaved }: Props) {
   const [connectors, setConnectors] = useState<string[]>(agent?.connectors ?? []);
   const [ragEnabled, setRagEnabled] = useState(agent?.rag_enabled ?? false);
   const [maxToolTurns, setMaxToolTurns] = useState(agent?.max_tool_turns ?? 5);
+  const [referenceUrls, setReferenceUrls] = useState<string[]>(agent?.reference_urls ?? []);
+  const [urlInput, setUrlInput] = useState("");
 
   const [providers, setProviders] = useState<Provider[]>([]);
   const [models, setModels] = useState<LLMModel[]>([]);
@@ -65,6 +67,7 @@ export default function AgentForm({ agent, onClose, onSaved }: Props) {
         connectors,
         rag_enabled: ragEnabled,
         max_tool_turns: maxToolTurns,
+        reference_urls: referenceUrls,
       };
       if (agent) {
         await updateAgent(agent.id, data);
@@ -210,6 +213,68 @@ export default function AgentForm({ agent, onClose, onSaved }: Props) {
               </div>
             </div>
           )}
+
+          {/* Reference URLs */}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              URLs de référence 🌐
+              <span className="ml-1 text-gray-400">(sites web à consulter automatiquement)</span>
+            </label>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && urlInput.trim()) {
+                      e.preventDefault();
+                      if (!referenceUrls.includes(urlInput.trim())) {
+                        setReferenceUrls([...referenceUrls, urlInput.trim()]);
+                      }
+                      setUrlInput("");
+                    }
+                  }}
+                  placeholder="https://www.example.com"
+                  className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:border-[#075e54] text-gray-800"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (urlInput.trim() && !referenceUrls.includes(urlInput.trim())) {
+                      setReferenceUrls([...referenceUrls, urlInput.trim()]);
+                      setUrlInput("");
+                    }
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#075e54] hover:bg-[#054d45] rounded-lg transition-colors"
+                >
+                  Ajouter
+                </button>
+              </div>
+              {referenceUrls.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {referenceUrls.map((url, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-xs"
+                    >
+                      <span className="text-blue-700 truncate max-w-[200px]">{url}</span>
+                      <button
+                        type="button"
+                        onClick={() => setReferenceUrls(referenceUrls.filter((_, i) => i !== idx))}
+                        className="text-blue-600 hover:text-red-600 transition-colors"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-gray-400">
+                Ex: https://www.legifrance.gouv.fr pour un agent juridique
+              </p>
+            </div>
+          </div>
 
           {/* RAG + Max tool turns */}
           <div className="flex items-center gap-6">
