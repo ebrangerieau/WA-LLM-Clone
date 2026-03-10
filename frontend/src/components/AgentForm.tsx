@@ -27,6 +27,7 @@ export default function AgentForm({ agent, onClose, onSaved }: Props) {
   const [providerId, setProviderId] = useState(agent?.provider_id ?? "openrouter");
   const [modelId, setModelId] = useState(agent?.model_id ?? "");
   const [connectors, setConnectors] = useState<string[]>(agent?.connectors ?? []);
+  const [capabilities, setCapabilities] = useState<string[]>(agent?.capabilities ?? ["text"]);
   const [ragEnabled, setRagEnabled] = useState(agent?.rag_enabled ?? false);
   const [maxToolTurns, setMaxToolTurns] = useState(agent?.max_tool_turns ?? 5);
   const [referenceUrls, setReferenceUrls] = useState<string[]>(agent?.reference_urls ?? []);
@@ -65,6 +66,7 @@ export default function AgentForm({ agent, onClose, onSaved }: Props) {
         model_id: modelId,
         provider_id: providerId,
         connectors,
+        capabilities,
         rag_enabled: ragEnabled,
         max_tool_turns: maxToolTurns,
         reference_urls: referenceUrls,
@@ -83,6 +85,19 @@ export default function AgentForm({ agent, onClose, onSaved }: Props) {
   };
 
   const ICON_OPTIONS = ["🤖", "✨", "💻", "✍️", "📚", "📅", "🔬", "🎨", "🧠", "⚡", "🌐", "🛠️"];
+
+  const CAPABILITIES = [
+    { id: "text", label: "💬 Texte", description: "Capacité de base à dialoguer", mandatory: true },
+    { id: "image", label: "🎨 Image", description: "Génération d'images via IA" },
+    { id: "web_search", label: "🌐 Recherche Web", description: "Accès aux informations en temps réel" },
+  ];
+
+  const toggleCapability = (id: string) => {
+    if (id === "text") return; // Mandatory
+    setCapabilities(prev => 
+      prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -137,6 +152,30 @@ export default function AgentForm({ agent, onClose, onSaved }: Props) {
                 placeholder="Description courte..."
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:border-[#075e54] text-gray-800"
               />
+            </div>
+          </div>
+
+          {/* Capacités */}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-2">Capacités de l'agent</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {CAPABILITIES.map((cap) => (
+                <button
+                  key={cap.id}
+                  onClick={() => toggleCapability(cap.id)}
+                  type="button"
+                  className={`flex flex-col items-start p-2.5 rounded-xl border transition-all text-left ${
+                    capabilities.includes(cap.id)
+                      ? "border-[#075e54] bg-[#e8f5e9] text-[#075e54]"
+                      : "border-gray-100 bg-gray-50 text-gray-400 hover:border-gray-200"
+                  }`}
+                >
+                  <span className={`text-sm font-semibold mb-0.5 ${capabilities.includes(cap.id) ? "text-[#075e54]" : "text-gray-600"}`}>
+                    {cap.label}
+                  </span>
+                  <span className="text-[10px] leading-tight opacity-80">{cap.description}</span>
+                </button>
+              ))}
             </div>
           </div>
 

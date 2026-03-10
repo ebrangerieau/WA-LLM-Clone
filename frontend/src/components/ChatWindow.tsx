@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Send, Paperclip, X, FileText, ArrowLeft, Mic, MicOff, Plug, PanelLeftClose, PanelLeftOpen, MessageSquareText, Image as ImageIcon, Search, Settings } from "lucide-react";
+import { Send, Paperclip, X, FileText, ArrowLeft, Mic, MicOff, Plug, PanelLeftClose, PanelLeftOpen, MessageSquareText, Image as ImageIcon, Search, Settings, Menu } from "lucide-react";
 import { fetchMessages, streamChat, ChatMessage, fetchRagDocuments, fetchConversation, Agent, fetchPreferences, savePreferences, UserPreferences } from "@/lib/api";
 import MessageBubble, { StreamingBubble } from "./MessageBubble";
 import ModelSelector from "./ModelSelector";
@@ -366,9 +366,16 @@ export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSide
           <button
             onClick={onToggleSidebar}
             title={isSidebarOpen ? "Masquer la barre latérale" : "Afficher la barre latérale"}
-            className="text-gray-500 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+            className="text-gray-500 p-2.5 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
           >
-            {isSidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+            {isSidebarOpen ? (
+              <PanelLeftClose size={22} />
+            ) : (
+              <div className="flex items-center">
+                <Menu size={22} className="md:hidden" />
+                <PanelLeftOpen size={22} className="hidden md:block" />
+              </div>
+            )}
           </button>
         </div>
         <div className="flex-1 flex items-center justify-center">
@@ -393,14 +400,21 @@ export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSide
             <button
               onClick={onToggleSidebar}
               title={isSidebarOpen ? "Masquer la barre latérale" : "Afficher la barre latérale"}
-              className="text-gray-500 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              className="text-gray-500 p-2.5 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
             >
-              {isSidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+              {isSidebarOpen ? (
+                <PanelLeftClose size={22} />
+              ) : (
+                <div className="flex items-center">
+                  <Menu size={22} className="md:hidden" />
+                  <PanelLeftOpen size={22} className="hidden md:block" />
+                </div>
+              )}
             </button>
           )}
           {onBack && (
-            <button onClick={onBack} className="text-gray-500 p-1 rounded-full hover:bg-gray-100 md:hidden">
-              <ArrowLeft size={20} />
+            <button onClick={onBack} className="text-gray-500 p-2 rounded-full hover:bg-gray-100 md:hidden flex-shrink-0">
+              <ArrowLeft size={22} />
             </button>
           )}
         </div>
@@ -536,6 +550,16 @@ export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSide
         )}
         {agent && (
           <div className="flex items-center gap-1.5">
+            {agent.capabilities.includes("image") && (
+              <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <ImageIcon size={10} /> Image
+              </span>
+            )}
+            {agent.capabilities.includes("web_search") && (
+              <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <Search size={10} /> Web
+              </span>
+            )}
             {agent.rag_enabled && (
               <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                 RAG

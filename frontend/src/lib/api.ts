@@ -83,6 +83,7 @@ export interface Agent {
   model_id: string;
   provider_id: string;
   connectors: string[];
+  capabilities: string[];
   rag_enabled: boolean;
   is_default: boolean;
   max_tool_turns: number;

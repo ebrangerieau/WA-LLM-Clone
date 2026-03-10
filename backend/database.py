@@ -28,6 +28,7 @@ class Agent(Base):
     model_id = Column(String(200), nullable=True)
     provider_id = Column(String(50), nullable=True)
     connectors = Column(Text, default="[]")  # JSON array of connector IDs
+    capabilities = Column(Text, default='["text"]')  # JSON array: ["text", "image", "web_search"]
     rag_enabled = Column(Boolean, default=False)
     is_default = Column(Boolean, default=False)
     max_tool_turns = Column(Integer, default=5)

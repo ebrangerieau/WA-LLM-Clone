@@ -110,7 +110,18 @@ export default function AgentManager({ isOpen, onClose }: Props) {
                       )}
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5 truncate">{agent.description}</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {agent.capabilities?.includes("image") && (
+                        <span className="text-[8px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full uppercase">🎨 Image</span>
+                      )}
+                      {agent.capabilities?.includes("web_search") && (
+                        <span className="text-[8px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full uppercase">🌐 Web</span>
+                      )}
+                      {agent.rag_enabled && (
+                        <span className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full uppercase text-center">RAG</span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-1">
                       {agent.provider_id} / {agent.model_id?.split("/").pop() || "—"}
                     </p>
                   </div>

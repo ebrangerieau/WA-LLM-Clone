@@ -28,9 +28,10 @@ interface Props {
   selectedId: number | null;
   onSelect: (id: number) => void;
   refreshTrigger: number;
+  onToggleSidebar?: () => void;
 }
 
-export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props) {
+export default function Sidebar({ selectedId, onSelect, refreshTrigger, onToggleSidebar }: Props) {
   const { logout } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [search, setSearch] = useState("");
@@ -101,6 +102,15 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger }: Props)
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-[#202c33]">
         <div className="flex items-center gap-2">
+          {onToggleSidebar && (
+            <button
+              onClick={onToggleSidebar}
+              className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors md:hidden"
+              title="Fermer la barre latérale"
+            >
+              <X size={20} className="text-gray-300" />
+            </button>
+          )}
           <div className="w-9 h-9 rounded-full bg-[#075e54] flex items-center justify-center font-bold text-sm">
             M
           </div>

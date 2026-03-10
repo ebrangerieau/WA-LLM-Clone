@@ -14,7 +14,7 @@ export default function Home() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[#e5ddd5] flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-[#e5ddd5] flex items-center justify-center">
         <div className="w-10 h-10 border-4 border-[#075e54] border-t-transparent rounded-full animate-spin" />
       </div>
     );
@@ -42,7 +42,7 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen flex overflow-hidden bg-[#111b21]">
+    <div className="h-screen h-[100dvh] flex overflow-hidden bg-[#111b21]">
       {/* Sidebar */}
       <div
         className={`
@@ -61,6 +61,7 @@ export default function Home() {
             selectedId={selectedConv}
             onSelect={handleSelectConv}
             refreshTrigger={refreshTrigger}
+            onToggleSidebar={toggleSidebar}
           />
         </div>
       </div>

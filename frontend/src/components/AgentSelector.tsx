@@ -84,6 +84,16 @@ export default function AgentSelector({ isOpen, onClose, onSelect, onCreateAgent
                     <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{agent.description}</p>
                     {/* Badges */}
                     <div className="flex items-center justify-center gap-1.5 mt-2 flex-wrap">
+                      {agent.capabilities?.includes("image") && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full">
+                          🎨 Image
+                        </span>
+                      )}
+                      {agent.capabilities?.includes("web_search") && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full">
+                          🌐 Web
+                        </span>
+                      )}
                       {agent.rag_enabled && (
                         <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full">
                           <Database size={8} />

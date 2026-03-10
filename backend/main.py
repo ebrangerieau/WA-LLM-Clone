@@ -59,7 +59,9 @@ def _migrate_add_reference_urls():
         cols = [row[1] for row in conn.execute(text("PRAGMA table_info(agents)"))]
         if "reference_urls" not in cols:
             conn.execute(text("ALTER TABLE agents ADD COLUMN reference_urls TEXT DEFAULT '[]'"))
-            conn.commit()
+        if "capabilities" not in cols:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN capabilities TEXT DEFAULT '[\"text\"]'"))
+        conn.commit()
 
 
 def _migrate_add_user_preferences():
@@ -130,6 +132,7 @@ class AgentCreate(BaseModel):
     model_id: str = ""
     provider_id: str = ""
     connectors: List[str] = []
+    capabilities: List[str] = ["text"]
     rag_enabled: bool = False
     max_tool_turns: int = 5
     reference_urls: List[str] = []
@@ -143,6 +146,7 @@ class AgentUpdate(BaseModel):
     model_id: Optional[str] = None
     provider_id: Optional[str] = None
     connectors: Optional[List[str]] = None
+    capabilities: Optional[List[str]] = None
     rag_enabled: Optional[bool] = None
     max_tool_turns: Optional[int] = None
     reference_urls: Optional[List[str]] = None
@@ -394,6 +398,15 @@ def _agent_to_dict(a: Agent) -> dict:
         print(f"[WARNING] JSON invalide pour reference_urls de l'agent {a.id}, utilisation de []")
         reference_urls = []
 
+    # Désérialisation sécurisée des capabilities avec fallback
+    try:
+        capabilities = json.loads(a.capabilities) if a.capabilities else ["text"]
+        if not isinstance(capabilities, list):
+            capabilities = ["text"]
+    except json.JSONDecodeError:
+        print(f"[WARNING] JSON invalide pour capabilities de l'agent {a.id}, utilisation de ['text']")
+        capabilities = ["text"]
+
     return {
         "id": a.id,
         "name": a.name,
@@ -403,6 +416,7 @@ def _agent_to_dict(a: Agent) -> dict:
         "model_id": a.model_id or "",
         "provider_id": a.provider_id or "",
         "connectors": connectors,
+        "capabilities": capabilities,
         "rag_enabled": a.rag_enabled,
         "is_default": a.is_default,
         "max_tool_turns": a.max_tool_turns or 5,
@@ -422,7 +436,8 @@ def list_agents(db: Session = Depends(get_db), user: str = Depends(verify_token)
 def create_agent(body: AgentCreate, db: Session = Depends(get_db), user: str = Depends(verify_token)):
     try:
         connectors_json = _validate_connectors_json(body.connectors)
-        reference_urls_json = _validate_connectors_json(body.reference_urls)  # Réutilise la même validation pour les URLs
+        reference_urls_json = _validate_connectors_json(body.reference_urls)
+        capabilities_json = _validate_connectors_json(body.capabilities)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -434,6 +449,7 @@ def create_agent(body: AgentCreate, db: Session = Depends(get_db), user: str = D
         model_id=body.model_id,
         provider_id=body.provider_id,
         connectors=connectors_json,
+        capabilities=capabilities_json,
         rag_enabled=body.rag_enabled,
         is_default=False,
         max_tool_turns=body.max_tool_turns,
@@ -460,7 +476,7 @@ def update_agent(agent_id: int, body: AgentUpdate, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Agent introuvable")
 
     for field, value in body.model_dump(exclude_unset=True).items():
-        if field in ("connectors", "reference_urls"):
+        if field in ("connectors", "reference_urls", "capabilities"):
             try:
                 validated_json = _validate_connectors_json(value)
                 setattr(agent, field, validated_json)
@@ -733,17 +749,18 @@ def build_llm_context(messages: List[Message], summary: Optional[str]) -> List[d
 # ---------------------------------------------------------------------------
 def get_intent_and_clean_message(message: str, active_connectors: List[str]):
     """Détecte l'intention via tags ou contenu et retourne le message nettoyé."""
+    import re
     m = message.strip()
-    intent = {"is_image": False, "is_research": False, "clean_message": m}
+    intent = {"is_image": False, "is_research": False, "clean_message": m, "detection": "none"}
 
-    # 1. Détection par tags (prioritaire) - Supporte "/image", "/image ", "/image:", "/img", etc.
+    # 1. Détection par tags (prioritaire)
     m_lower = m.lower()
     
     # Tags Image
     for tag in ["/image", "/img"]:
         if m_lower.startswith(tag):
             intent["is_image"] = True
-            # On retire le tag et les éventuels séparateurs (: ou espace)
+            intent["detection"] = "tag"
             rest = m[len(tag):].lstrip()
             if rest.startswith(":"):
                 rest = rest[1:].lstrip()
@@ -754,6 +771,7 @@ def get_intent_and_clean_message(message: str, active_connectors: List[str]):
     for tag in ["/search", "/recherche", "/web"]:
         if m_lower.startswith(tag):
             intent["is_research"] = True
+            intent["detection"] = "tag"
             rest = m[len(tag):].lstrip()
             if rest.startswith(":"):
                 rest = rest[1:].lstrip()
@@ -763,16 +781,26 @@ def get_intent_and_clean_message(message: str, active_connectors: List[str]):
     # 2. Détection par connecteurs actifs
     if any(c in active_connectors for c in ["web_search", "perplexity_search", "web_browsing"]):
         intent["is_research"] = True
+        intent["detection"] = "connector"
         return intent
 
-    # 3. Détection par analyse naturelle (fallback)
+    # 3. Détection par analyse naturelle (fallback) - PLUS STRICTE
+    prefix = m_lower[:100]
+    
     image_keywords = ["image", "dessin", "photo", "illustration", "picture", "draw"]
     action_keywords = ["fait", "fais", "génère", "genere", "crée", "cree", "dessine", "generate", "create", "draw"]
-    p = m.lower()
-    if p.startswith(("dessine ", "trace ", "draw ")):
+    
+    if re.search(r"^(dessine|trace|draw)\b", prefix):
         intent["is_image"] = True
-    elif any(kw in p for kw in action_keywords) and any(kw in p for kw in image_keywords):
+        intent["detection"] = "natural"
+        return intent
+
+    has_action = any(re.search(rf"\b{re.escape(kw)}\b", prefix) for kw in action_keywords)
+    has_image = any(re.search(rf"\b{re.escape(kw)}\b", prefix) for kw in image_keywords)
+    
+    if has_action and has_image:
         intent["is_image"] = True
+        intent["detection"] = "natural"
 
     return intent
 
@@ -787,78 +815,81 @@ async def chat_stream(
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation introuvable")
 
-    # ── Résolution intention et modèle ──────────────────────────────────
+    # 1. Résolution de l'agent et de ses capacités
+    agent = None
+    agent_capabilities = ["text", "image", "web_search"]  # Capacités par défaut (sans agent)
+    if conv.agent_id:
+        agent = db.query(Agent).filter(Agent.id == conv.agent_id).first()
+        if agent:
+            try:
+                agent_capabilities = json.loads(agent.capabilities) if agent.capabilities else ["text"]
+            except json.JSONDecodeError:
+                agent_capabilities = ["text"]
+
+    # 2. Résolution intention
     intent_data = get_intent_and_clean_message(req.message, req.active_connectors)
     is_image = intent_data["is_image"]
     is_research = intent_data["is_research"]
     clean_message = intent_data["clean_message"]
-    
-    print(f"[DEBUG] RECV - Message: '{req.message[:40]}...'")
-    print(f"[DEBUG] RECV - Models: Text={req.text_model_id}, Image={req.image_model_id}, Research={req.research_model_id}")
-    print(f"[DEBUG] INTENT - Image={is_image}, Research={is_research}, CleanMsg='{clean_message[:30]}...'")
-    
+    detection_mode = intent_data["detection"]
+
+    # 3. Validation stricte des capacités
+    if is_image and "image" not in agent_capabilities:
+        if detection_mode == "tag":
+            raise HTTPException(status_code=400, detail=f"L'agent '{agent.name}' ne supporte pas la génération d'images.")
+        else:
+            is_image = False  # Ignorer la détection naturelle si non supportée
+
+    if is_research and "web_search" not in agent_capabilities:
+        if detection_mode == "tag":
+            raise HTTPException(status_code=400, detail=f"L'agent '{agent.name}' ne supporte pas la recherche web.")
+        else:
+            is_research = False
+
+    # 4. Résolution du modèle effectif
     if is_image and req.image_model_id:
         effective_model = req.image_model_id
         effective_provider = req.image_provider_id or req.provider_id
-        print(f"[DEBUG] ROUTE -> IMAGE using {effective_model}")
     elif is_research and req.research_model_id:
         effective_model = req.research_model_id
         effective_provider = req.research_provider_id or req.provider_id
-        print(f"[DEBUG] ROUTE -> RESEARCH using {effective_model}")
     else:
-        effective_model = req.text_model_id or req.model_id or "openai/gpt-4o-mini"
+        effective_model = req.text_model_id or req.model_id or _DEFAULT_MODEL
         effective_provider = req.text_provider_id or req.provider_id
-        print(f"[DEBUG] ROUTE -> TEXT using {effective_model}")
+        # L'agent force son propre modèle s'il est défini et qu'on est en mode texte
+        if agent and agent.model_id:
+            effective_model = agent.model_id
+            effective_provider = agent.provider_id or effective_provider
 
-    # ── Résolution agent (override si présent) ──────────────────────────
-    agent = None
-    if conv.agent_id:
-        agent = db.query(Agent).filter(Agent.id == conv.agent_id).first()
-        if agent:
-            # L'agent force son propre modèle s'il est défini, sauf si un tag explicite est utilisé
-            if not (is_image or is_research):
-                effective_model = agent.model_id or effective_model
-                effective_provider = agent.provider_id or effective_provider
+    print(f"[DEBUG] RECV - Message: '{req.message[:40]}...'")
+    print(f"[DEBUG] INTENT - Image={is_image}, Research={is_research}, Mode={detection_mode}")
+    print(f"[DEBUG] FINAL - Model={effective_model}, Provider={effective_provider}")
 
-        # Désérialisation sécurisée des connecteurs
+    # 5. Paramètres spécifiques à l'agent (connecteurs, RAG, etc.)
+    if agent:
         try:
             agent_connectors = json.loads(agent.connectors) if agent.connectors else []
-            if not isinstance(agent_connectors, list):
-                agent_connectors = []
         except json.JSONDecodeError:
-            print(f"[WARNING] JSON connecteurs invalide pour agent {agent.id}, utilisation de []")
             agent_connectors = []
 
-        # Désérialisation sécurisée des reference_urls
         try:
             agent_reference_urls = json.loads(agent.reference_urls) if agent.reference_urls else []
-            if not isinstance(agent_reference_urls, list):
-                agent_reference_urls = []
         except json.JSONDecodeError:
-            print(f"[WARNING] JSON reference_urls invalide pour agent {agent.id}, utilisation de []")
             agent_reference_urls = []
 
-        # Auto-activation du connecteur web_search si l'agent a des URLs de référence
         if agent_reference_urls and "web_search" not in agent_connectors:
             agent_connectors.append("web_search")
 
         effective_connectors = req.active_connectors if req.active_connectors else agent_connectors
         effective_rag = agent.rag_enabled
         effective_max_turns = agent.max_tool_turns or 5
-        agent_system_prompt = agent.system_prompt if agent.system_prompt else None
+        agent_system_prompt = agent.system_prompt
     else:
-        # Pas d'agent : effective_model et effective_provider sont déjà définis
-        # selon l'intention (image / recherche / texte) — ne pas les écraser ici.
-        # On les assure avec un fallback si manquants (ne devrait pas arriver).
-        if not effective_model:
-            effective_model = req.model_id or "openai/gpt-4o-mini"
-        if not effective_provider:
-            effective_provider = req.provider_id or "openrouter"
         effective_connectors = req.active_connectors
         effective_rag = effective_provider in RAG_ALLOWED_PROVIDERS
         effective_max_turns = 5
         agent_system_prompt = None
-
+        agent_reference_urls = []
     # Save user message
     file_names = [f.name for f in req.files]
     stored_content = req.message
@@ -932,7 +963,18 @@ async def chat_stream(
         print(f"[RAG] Ignoré pour provider '{effective_provider}' (non autorisé ou désactivé)")
 
     # Handle image generation models
-    if is_image or is_image_model(effective_model):
+    trigger_image = is_image or is_image_model(effective_model)
+    
+    # Sécurité ultime : si l'agent n'a pas la capacité image, on ne génère JAMAIS d'image
+    if trigger_image and agent and "image" not in agent_capabilities:
+        print(f"[DEBUG] Blocage génération image : l'agent '{agent.name}' n'a pas la capacité.")
+        trigger_image = False
+        # Si le modèle était un modèle d'image, on repasse sur un modèle de texte
+        if is_image_model(effective_model):
+            effective_model = req.text_model_id or req.model_id or _DEFAULT_MODEL
+            effective_provider = req.text_provider_id or req.provider_id
+
+    if trigger_image:
         print(f"[DEBUG] Executing IMAGE generation path with {effective_model}")
         async def image_event_stream():
             try:
