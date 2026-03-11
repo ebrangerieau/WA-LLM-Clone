@@ -1,14 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Send, Paperclip, X, FileText, ArrowLeft, Mic, MicOff, Plug, PanelLeftClose, PanelLeftOpen, MessageSquareText, Image as ImageIcon, Search, Settings, Menu } from "lucide-react";
+import { Send, Paperclip, X, FileText, ArrowLeft, Mic, MicOff, PanelLeftClose, PanelLeftOpen, MessageSquareText, Image as ImageIcon, Search, Menu } from "lucide-react";
 import { fetchMessages, streamChat, ChatMessage, fetchRagDocuments, fetchConversation, Agent, fetchPreferences, savePreferences, UserPreferences } from "@/lib/api";
 import MessageBubble, { StreamingBubble } from "./MessageBubble";
-import ModelSelector from "./ModelSelector";
-import ProviderSelector from "./ProviderSelector";
 import ConnectorSelector from "./ConnectorSelector";
-import ConnectorsPanel from "./ConnectorsPanel";
-import SettingsPanel from "./SettingsPanel";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
@@ -34,6 +30,7 @@ interface Props {
   onToggleSidebar?: () => void;
   onBack?: () => void;
   onNewMessage?: () => void;
+  settingsRefreshTrigger?: number;
 }
 
 interface StreamState {
@@ -62,7 +59,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSidebar, onBack, onNewMessage }: Props) {
+export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSidebar, onBack, onNewMessage, settingsRefreshTrigger }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [model, setModel] = useState(() => localStorage.getItem(STORAGE_KEYS.model) ?? DEFAULT_MODEL);
@@ -81,8 +78,6 @@ export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSide
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.connectors) ?? "[]"); } catch { return []; }
   });
   const [connectorRefresh, setConnectorRefresh] = useState(0);
-  const [showConnectorsPanel, setShowConnectorsPanel] = useState(false);
-  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [agent, setAgent] = useState<Agent | null>(null);
 
   useEffect(() => {
@@ -116,7 +111,7 @@ export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSide
         // Silencieux : garde les valeurs localStorage en fallback
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [settingsRefreshTrigger]);
 
   // Cleanup du timer debounce au démontage
   useEffect(() => {
@@ -362,18 +357,18 @@ export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSide
     return (
       <div className="flex-1 flex flex-col h-full bg-[#fafaf9]">
         {/* Simple Header for empty state */}
-        <div className="flex items-center px-4 py-3 bg-white border-b border-gray-200 shadow-sm z-10">
+        <div className="flex items-center px-2 sm:px-4 py-3 bg-white border-b border-gray-200 shadow-sm z-10">
           <button
             onClick={onToggleSidebar}
             title={isSidebarOpen ? "Masquer la barre latérale" : "Afficher la barre latérale"}
-            className="text-gray-500 p-2.5 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
+            className="text-gray-500 p-1.5 sm:p-2.5 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
           >
             {isSidebarOpen ? (
-              <PanelLeftClose size={22} />
+              <PanelLeftClose size={20} className="sm:w-5 sm:h-5" />
             ) : (
               <div className="flex items-center">
-                <Menu size={22} className="md:hidden" />
-                <PanelLeftOpen size={22} className="hidden md:block" />
+                <Menu size={20} className="md:hidden sm:w-5 sm:h-5" />
+                <PanelLeftOpen size={20} className="hidden md:block sm:w-5 sm:h-5" />
               </div>
             )}
           </button>
@@ -394,180 +389,59 @@ export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSide
   return (
     <div className="flex-1 flex flex-col h-full bg-[#fafaf9]">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 shadow-sm z-10">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-3 px-2 sm:px-4 py-3 bg-white border-b border-gray-200 shadow-sm z-10">
+        <div className="flex items-center gap-1 sm:gap-2">
           {onToggleSidebar && (
             <button
               onClick={onToggleSidebar}
               title={isSidebarOpen ? "Masquer la barre latérale" : "Afficher la barre latérale"}
-              className="text-gray-500 p-2.5 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
+              className="text-gray-500 p-1.5 sm:p-2.5 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
             >
               {isSidebarOpen ? (
-                <PanelLeftClose size={22} />
+                <PanelLeftClose size={20} className="sm:w-5 sm:h-5" />
               ) : (
                 <div className="flex items-center">
-                  <Menu size={22} className="md:hidden" />
-                  <PanelLeftOpen size={22} className="hidden md:block" />
+                  <Menu size={20} className="md:hidden sm:w-5 sm:h-5" />
+                  <PanelLeftOpen size={20} className="hidden md:block sm:w-5 sm:h-5" />
                 </div>
               )}
             </button>
           )}
           {onBack && (
-            <button onClick={onBack} className="text-gray-500 p-2 rounded-full hover:bg-gray-100 md:hidden flex-shrink-0">
-              <ArrowLeft size={22} />
+            <button onClick={onBack} className="text-gray-500 p-1.5 rounded-full hover:bg-gray-100 md:hidden flex-shrink-0">
+              <ArrowLeft size={20} />
             </button>
           )}
         </div>
-        <div className="w-8 h-8 rounded-full bg-[#075e54] flex items-center justify-center text-white font-bold text-sm">
+        <div className="w-8 h-8 rounded-full bg-[#075e54] flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
           {agent ? agent.icon : "M"}
         </div>
-        <div className="flex-1">
-          <p className="text-gray-900 font-semibold text-sm">{agent ? agent.name : "Mia"}</p>
-          <p className="text-gray-400 text-xs">
+        <div className="min-w-0 flex-1">
+          <p className="text-gray-900 font-semibold text-xs sm:text-sm truncate">{agent ? agent.name : "Mia"}</p>
+          <p className="text-gray-400 text-[10px] sm:text-xs truncate">
             {agent ? `${agent.provider_id} / ${agent.model_id?.split("/").pop() || "—"}` : "Assistant IA"}
           </p>
         </div>
-        {!agent && (
-          <div className="flex items-center gap-2 py-1">
-            <ModelSelector 
-              label="Texte" 
-              icon={<MessageSquareText size={12} />}
-              selectedModel={textModel} 
-              selectedProvider={provider} 
-              allowedModels={allowedTextModels}
-              favoriteModel={textModel} // Le modèle sélectionné est considéré comme le favori actuel
-              onSelect={(m, p) => {
-                setTextModel(m);
-                localStorage.setItem(STORAGE_KEYS.textModel, m);
-                setModel(m);
-                setProvider(p);
-                localStorage.setItem(STORAGE_KEYS.provider, p);
-              }}
-              onSetFavorite={(m, p) => {
-                setTextModel(m);
-                localStorage.setItem(STORAGE_KEYS.textModel, m);
-                setProvider(p);
-                localStorage.setItem(STORAGE_KEYS.provider, p);
-                debouncedSavePrefs({ 
-                  model_id: m,
-                  text_model_id: m,
-                  image_model_id: imageModel,
-                  research_model_id: researchModel,
-                  allowed_text_models: allowedTextModels,
-                  allowed_image_models: allowedImageModels,
-                  allowed_research_models: allowedResearchModels,
-                  provider_id: p, 
-                  connectors: activeConnectors 
-                });
-              }}
-            />
-            
-            <ModelSelector 
-              label="Image" 
-              icon={<ImageIcon size={12} />}
-              selectedModel={imageModel} 
-              selectedProvider={provider} 
-              allowedModels={allowedImageModels}
-              favoriteModel={imageModel}
-              onSelect={(m, p) => {
-                setImageModel(m);
-                localStorage.setItem(STORAGE_KEYS.imageModel, m);
-                setProvider(p);
-                localStorage.setItem(STORAGE_KEYS.provider, p);
-              }}
-              onSetFavorite={(m, p) => {
-                setImageModel(m);
-                localStorage.setItem(STORAGE_KEYS.imageModel, m);
-                setProvider(p);
-                localStorage.setItem(STORAGE_KEYS.provider, p);
-                debouncedSavePrefs({ 
-                  model_id: model,
-                  text_model_id: textModel,
-                  image_model_id: m,
-                  research_model_id: researchModel,
-                  allowed_text_models: allowedTextModels,
-                  allowed_image_models: allowedImageModels,
-                  allowed_research_models: allowedResearchModels,
-                  provider_id: p, 
-                  connectors: activeConnectors 
-                });
-              }}
-            />
-
-            <ModelSelector 
-              label="Recherche" 
-              icon={<Search size={12} />}
-              selectedModel={researchModel} 
-              selectedProvider={provider} 
-              allowedModels={allowedResearchModels}
-              favoriteModel={researchModel}
-              onSelect={(m, p) => {
-                setResearchModel(m);
-                localStorage.setItem(STORAGE_KEYS.researchModel, m);
-                setProvider(p);
-                localStorage.setItem(STORAGE_KEYS.provider, p);
-              }}
-              onSetFavorite={(m, p) => {
-                setResearchModel(m);
-                localStorage.setItem(STORAGE_KEYS.researchModel, m);
-                setProvider(p);
-                localStorage.setItem(STORAGE_KEYS.provider, p);
-                debouncedSavePrefs({ 
-                  model_id: model,
-                  text_model_id: textModel,
-                  image_model_id: imageModel,
-                  research_model_id: m,
-                  allowed_text_models: allowedTextModels,
-                  allowed_image_models: allowedImageModels,
-                  allowed_research_models: allowedResearchModels,
-                  provider_id: p, 
-                  connectors: activeConnectors 
-                });
-              }}
-            />
-
-            <div className="h-6 w-px bg-gray-200 mx-1 flex-shrink-0" />
-
-            <button
-              onClick={() => setShowConnectorsPanel(true)}
-              title="Gérer les connecteurs"
-              className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center transition-all ${activeConnectors.length > 0
-                  ? "bg-[#075e54]/10 hover:bg-[#075e54]/20 text-[#075e54]"
-                  : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                }`}
-            >
-              <Plug size={15} />
-            </button>
-
-            <button
-              onClick={() => setShowSettingsPanel(true)}
-              title="Paramètres des modèles"
-              className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
-            >
-              <Settings size={15} />
-            </button>
-          </div>
-        )}
         {agent && (
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap justify-end ml-auto">
             {agent.capabilities.includes("image") && (
-              <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full flex items-center gap-1">
-                <ImageIcon size={10} /> Image
+              <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 sm:px-2 py-0.5 rounded-full flex items-center gap-1 flex-shrink-0">
+                <ImageIcon size={10} /> <span className="hidden sm:inline">Image</span>
               </span>
             )}
             {agent.capabilities.includes("web_search") && (
-              <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full flex items-center gap-1">
-                <Search size={10} /> Web
+              <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 sm:px-2 py-0.5 rounded-full flex items-center gap-1 flex-shrink-0">
+                <Search size={10} /> <span className="hidden sm:inline">Web</span>
               </span>
             )}
             {agent.rag_enabled && (
-              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 sm:px-2 py-0.5 rounded-full flex-shrink-0">
                 RAG
               </span>
             )}
             {agent.connectors.length > 0 && (
-              <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
-                {agent.connectors.length} connecteur{agent.connectors.length > 1 ? "s" : ""}
+              <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 sm:px-2 py-0.5 rounded-full flex-shrink-0">
+                {agent.connectors.length} <span className="hidden sm:inline">connecteur{agent.connectors.length > 1 ? "s" : ""}</span><span className="sm:hidden">conn.</span>
               </span>
             )}
           </div>
@@ -723,25 +597,6 @@ export default function ChatWindow({ conversationId, isSidebarOpen, onToggleSide
         </div>
       </div>
 
-      {/* Connectors Panel */}
-      <ConnectorsPanel
-        isOpen={showConnectorsPanel}
-        onClose={() => setShowConnectorsPanel(false)}
-        onConnectorChange={() => setConnectorRefresh((n) => n + 1)}
-      />
-      {/* Settings Panel */}
-      <SettingsPanel
-        isOpen={showSettingsPanel}
-        onClose={() => {
-          setShowSettingsPanel(false);
-          // Rafraîchir les préférences locales après fermeture
-          fetchPreferences().then(prefs => {
-            if (prefs.allowed_text_models) setAllowedTextModels(prefs.allowed_text_models);
-            if (prefs.allowed_image_models) setAllowedImageModels(prefs.allowed_image_models);
-            if (prefs.allowed_research_models) setAllowedResearchModels(prefs.allowed_research_models);
-          });
-        }}
-      />
     </div>
   );
 }

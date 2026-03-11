@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Settings, MessageSquareText, Image as ImageIcon, Search, Check, Save, Loader2 } from "lucide-react";
-import { fetchModels, LLMModel, UserPreferences, fetchPreferences, savePreferences } from "@/lib/api";
+import { X, Settings, MessageSquareText, Image as ImageIcon, Search, Check, Save, Loader2, Globe, Server, ShieldCheck, ShieldOff } from "lucide-react";
+import { fetchModels, LLMModel, UserPreferences, fetchPreferences, savePreferences, fetchProviders, Provider } from "@/lib/api";
 
 interface Props {
   isOpen: boolean;
@@ -11,6 +11,7 @@ interface Props {
 
 export default function SettingsPanel({ isOpen, onClose }: Props) {
   const [models, setModels] = useState<LLMModel[]>([]);
+  const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
@@ -22,9 +23,17 @@ export default function SettingsPanel({ isOpen, onClose }: Props) {
     
     Promise.all([
       fetchModels(), // Récupérer TOUS les modèles
+      fetchProviders(), // Récupérer les providers
       fetchPreferences()
-    ]).then(([modelsData, prefsData]) => {
+    ]).then(([modelsData, providersData, prefsData]) => {
       setModels(modelsData);
+      setProviders(providersData);
+      
+      // Si prefsData.enabled_providers est vide, on l'initialise avec les providers activés par défaut
+      if (!prefsData.enabled_providers || prefsData.enabled_providers.length === 0) {
+        prefsData.enabled_providers = providersData.filter(p => p.enabled).map(p => p.id);
+      }
+      
       setPrefs(prefsData);
     }).finally(() => setLoading(false));
   }, [isOpen]);
@@ -44,6 +53,18 @@ export default function SettingsPanel({ isOpen, onClose }: Props) {
     });
   };
 
+  const handleToggleProvider = (providerId: string) => {
+    if (!prefs) return;
+    setPrefs(prev => {
+      if (!prev) return null;
+      const currentEnabled = prev.enabled_providers || [];
+      const nextEnabled = currentEnabled.includes(providerId)
+        ? currentEnabled.filter(id => id !== providerId)
+        : [...currentEnabled, providerId];
+      return { ...prev, enabled_providers: nextEnabled };
+    });
+  };
+
   const handleSave = async () => {
     if (!prefs) return;
     setSaving(true);
@@ -57,8 +78,20 @@ export default function SettingsPanel({ isOpen, onClose }: Props) {
     }
   };
 
+  // Filtrer les modèles selon les providers activés
+  const enabledProviderIds = prefs?.enabled_providers || [];
+  
+  const filteredModels = models.filter(m => {
+    // Si c'est OpenRouter, on vérifie si openrouter est activé
+    if (m.provider_id === "openrouter") {
+      return enabledProviderIds.includes("openrouter");
+    }
+    // Sinon on vérifie le provider_id direct
+    return enabledProviderIds.includes(m.provider_id);
+  });
+
   // Grouper les modèles par provider réel
-  const groupedModels = models
+  const groupedModels = filteredModels
     .filter(m => 
       m.name.toLowerCase().includes(search.toLowerCase()) || 
       m.id.toLowerCase().includes(search.toLowerCase())
@@ -126,6 +159,13 @@ export default function SettingsPanel({ isOpen, onClose }: Props) {
             </div>
           ) : (
             <>
+              {/* API Providers Toggles */}
+              <ProviderToggleSection 
+                providers={providers}
+                enabledProviderIds={prefs?.enabled_providers || []}
+                onToggle={handleToggleProvider}
+              />
+
               {/* Category: Text */}
               <ModelCategorySection 
                 title="Modèles de Texte" 
@@ -259,3 +299,72 @@ function ModelItem({ model, selected, onToggle }: { model: LLMModel, selected: b
     </div>
   );
 }
+
+function ProviderToggleSection({ 
+  providers, 
+  enabledProviderIds, 
+  onToggle 
+}: { 
+  providers: Provider[], 
+  enabledProviderIds: string[],
+  onToggle: (id: string) => void
+}) {
+  return (
+    <section className="bg-gray-50/50 p-4 rounded-2xl border border-gray-100">
+      <div className="flex items-center gap-2 mb-4">
+        <Globe size={18} className="text-[#075e54]" />
+        <h3 className="font-bold text-gray-800 tracking-tight text-lg">Activations des API</h3>
+      </div>
+      <p className="text-xs text-gray-500 mb-6">
+        Activez ou désactivez les fournisseurs d'API pour l'ensemble du projet.
+      </p>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {providers.map(p => {
+          const isEnabled = enabledProviderIds.includes(p.id);
+          return (
+            <div 
+              key={p.id}
+              onClick={() => onToggle(p.id)}
+              className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col gap-2 items-center justify-center text-center ${
+                isEnabled 
+                  ? "border-[#075e54] bg-white shadow-sm ring-1 ring-[#075e54]/10" 
+                  : "border-gray-200 bg-gray-50/50 grayscale opacity-60 hover:grayscale-0 hover:opacity-100"
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xl shadow-sm ${
+                isEnabled ? "bg-[#e8f5e9]" : "bg-gray-200"
+              }`}>
+                {PROVIDER_ICONS[p.id] || "🔌"}
+              </div>
+              <div className="min-w-0">
+                <p className={`text-xs font-bold ${isEnabled ? "text-gray-800" : "text-gray-500"}`}>
+                  {p.name}
+                </p>
+                <div className="flex items-center justify-center gap-1 mt-1">
+                  {isEnabled ? (
+                    <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-0.5">
+                      <ShieldCheck size={10} /> ACTIF
+                    </span>
+                  ) : (
+                    <span className="text-[9px] text-gray-400 font-medium flex items-center gap-0.5">
+                      <ShieldOff size={10} /> INACTIF
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+const PROVIDER_ICONS: Record<string, string> = {
+  openrouter: "🔀",
+  openai:     "🤖",
+  mistral:    "🌬️",
+  deepseek:   "🔍",
+  perplexity: "🌐",
+  ollama:     "🏠",
+};

@@ -1,10 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import KnowledgeBase from "./KnowledgeBase";
-import AgentSelector from "./AgentSelector";
-import AgentManager from "./AgentManager";
-import AgentForm from "./AgentForm";
+import { useEffect, useState, useRef } from "react";
 import {
   MessageSquarePlus,
   Search,
@@ -14,6 +10,10 @@ import {
   Check,
   X,
   Bot,
+  Plug,
+  Settings,
+  MessageSquareText,
+  Image as ImageIcon,
 } from "lucide-react";
 import {
   fetchConversations,
@@ -21,17 +21,42 @@ import {
   deleteConversation,
   renameConversation,
   Conversation,
+  fetchPreferences,
+  savePreferences,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import ConnectorsPanel from "./ConnectorsPanel";
+import SettingsPanel from "./SettingsPanel";
+import ModelSelector from "./ModelSelector";
+import KnowledgeBase from "./KnowledgeBase";
+import AgentSelector from "./AgentSelector";
+import AgentManager from "./AgentManager";
+import AgentForm from "./AgentForm";
+
+const STORAGE_KEYS = {
+  model: "mia_selected_model",
+  textModel: "mia_selected_text_model",
+  imageModel: "mia_selected_image_model",
+  researchModel: "mia_selected_research_model",
+  provider: "mia_selected_provider",
+  connectors: "mia_active_connectors",
+} as const;
 
 interface Props {
   selectedId: number | null;
   onSelect: (id: number) => void;
   refreshTrigger: number;
+  settingsRefreshTrigger?: number;
   onToggleSidebar?: () => void;
+  onSettingsChange?: () => void;
 }
 
-export default function Sidebar({ selectedId, onSelect, refreshTrigger, onToggleSidebar }: Props) {
+const DEFAULT_MODEL = "openai/gpt-4o-mini";
+const DEFAULT_IMAGE_MODEL = "openai/dall-e-3";
+const DEFAULT_RESEARCH_MODEL = "perplexity/llama-3.1-sonar-large-128k-online";
+const DEFAULT_PROVIDER = "openrouter";
+
+export default function Sidebar({ selectedId, onSelect, refreshTrigger, settingsRefreshTrigger, onToggleSidebar, onSettingsChange }: Props) {
   const { logout } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [search, setSearch] = useState("");
@@ -40,6 +65,39 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger, onToggle
   const [showAgentSelector, setShowAgentSelector] = useState(false);
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [showAgentForm, setShowAgentForm] = useState(false);
+  const [showConnectorsPanel, setShowConnectorsPanel] = useState(false);
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [connectorRefresh, setConnectorRefresh] = useState(0);
+
+  const [textModel, setTextModel] = useState(DEFAULT_MODEL);
+  const [imageModel, setImageModel] = useState(DEFAULT_IMAGE_MODEL);
+  const [researchModel, setResearchModel] = useState(DEFAULT_RESEARCH_MODEL);
+  const [provider, setProvider] = useState(DEFAULT_PROVIDER);
+  const [allowedTextModels, setAllowedTextModels] = useState<string[]>([]);
+  const [allowedImageModels, setAllowedImageModels] = useState<string[]>([]);
+  const [allowedResearchModels, setAllowedResearchModels] = useState<string[]>([]);
+  const [activeConnectors, setActiveConnectors] = useState<string[]>([]);
+  const savePrefsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadPreferences = async () => {
+    try {
+      const prefs = await fetchPreferences();
+      setTextModel(prefs.text_model_id || prefs.model_id || DEFAULT_MODEL);
+      setImageModel(prefs.image_model_id || DEFAULT_IMAGE_MODEL);
+      setResearchModel(prefs.research_model_id || DEFAULT_RESEARCH_MODEL);
+      setProvider(prefs.provider_id || DEFAULT_PROVIDER);
+      setAllowedTextModels(prefs.allowed_text_models || []);
+      setAllowedImageModels(prefs.allowed_image_models || []);
+      setAllowedResearchModels(prefs.allowed_research_models || []);
+      setActiveConnectors(prefs.connectors || []);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    loadPreferences();
+  }, [refreshTrigger, settingsRefreshTrigger]);
 
   const load = async () => {
     try {
@@ -91,6 +149,13 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger, onToggle
   const cancelEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingId(null);
+  };
+
+  const debouncedSavePrefs = (prefs: any) => {
+    if (savePrefsTimerRef.current) clearTimeout(savePrefsTimerRef.current);
+    savePrefsTimerRef.current = setTimeout(() => {
+      savePreferences(prefs);
+    }, 1000);
   };
 
   const filtered = conversations.filter((c) =>
@@ -223,6 +288,133 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger, onToggle
           </div>
         ))}
       </div>
+
+      {/* Configuration Section */}
+      <div className="border-t border-[#1a3a35] py-3 bg-[#111b21]">
+        <div className="px-4 mb-3 flex items-center justify-between">
+          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Configuration</span>
+          <div className="flex gap-1">
+            <button
+              onClick={() => setShowConnectorsPanel(true)}
+              title="Gérer les connecteurs"
+              className="p-1.5 rounded-md text-gray-400 hover:bg-white/10 hover:text-[#25d366] transition-all"
+            >
+              <Plug size={16} />
+            </button>
+            <button
+              onClick={() => setShowSettingsPanel(true)}
+              title="Paramètres des modèles"
+              className="p-1.5 rounded-md text-gray-400 hover:bg-white/10 hover:text-[#25d366] transition-all"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
+        </div>
+        
+        <div className="px-3 space-y-2">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageSquareText size={14} className="text-gray-500" />
+                <span className="text-[10px] text-gray-400">Texte</span>
+              </div>
+              <ModelSelector 
+                selectedModel={textModel} 
+                selectedProvider={provider} 
+                allowedModels={allowedTextModels}
+                favoriteModel={textModel}
+                icon={<MessageSquareText size={12} />}
+                position="top"
+                align="right"
+                onSelect={(m, p) => {
+                  setTextModel(m);
+                  localStorage.setItem(STORAGE_KEYS.textModel, m);
+                  setProvider(p);
+                  localStorage.setItem(STORAGE_KEYS.provider, p);
+                  debouncedSavePrefs({ 
+                    text_model_id: m,
+                    image_model_id: imageModel,
+                    research_model_id: researchModel,
+                    provider_id: p, 
+                    connectors: activeConnectors,
+                    allowed_text_models: allowedTextModels,
+                    allowed_image_models: allowedImageModels,
+                    allowed_research_models: allowedResearchModels
+                  });
+                  if (onSettingsChange) onSettingsChange();
+                }}
+              />
+            </div>
+            
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ImageIcon size={14} className="text-gray-500" />
+                <span className="text-[10px] text-gray-400">Image</span>
+              </div>
+              <ModelSelector 
+                selectedModel={imageModel} 
+                selectedProvider={provider} 
+                allowedModels={allowedImageModels}
+                favoriteModel={imageModel}
+                icon={<ImageIcon size={12} />}
+                position="top"
+                align="right"
+                onSelect={(m, p) => {
+                  setImageModel(m);
+                  localStorage.setItem(STORAGE_KEYS.imageModel, m);
+                  setProvider(p);
+                  localStorage.setItem(STORAGE_KEYS.provider, p);
+                  debouncedSavePrefs({ 
+                    text_model_id: textModel,
+                    image_model_id: m,
+                    research_model_id: researchModel,
+                    provider_id: p, 
+                    connectors: activeConnectors,
+                    allowed_text_models: allowedTextModels,
+                    allowed_image_models: allowedImageModels,
+                    allowed_research_models: allowedResearchModels
+                  });
+                  if (onSettingsChange) onSettingsChange();
+                }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Search size={14} className="text-gray-500" />
+                <span className="text-[10px] text-gray-400">Recherche</span>
+              </div>
+              <ModelSelector 
+                selectedModel={researchModel} 
+                selectedProvider={provider} 
+                allowedModels={allowedResearchModels}
+                favoriteModel={researchModel}
+                icon={<Search size={12} />}
+                position="top"
+                align="right"
+                onSelect={(m, p) => {
+                  setResearchModel(m);
+                  localStorage.setItem(STORAGE_KEYS.researchModel, m);
+                  setProvider(p);
+                  localStorage.setItem(STORAGE_KEYS.provider, p);
+                  debouncedSavePrefs({ 
+                    text_model_id: textModel,
+                    image_model_id: imageModel,
+                    research_model_id: m,
+                    provider_id: p, 
+                    connectors: activeConnectors,
+                    allowed_text_models: allowedTextModels,
+                    allowed_image_models: allowedImageModels,
+                    allowed_research_models: allowedResearchModels
+                  });
+                  if (onSettingsChange) onSettingsChange();
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
       <KnowledgeBase />
 
       {/* Agent Selector Modal */}
@@ -252,6 +444,28 @@ export default function Sidebar({ selectedId, onSelect, refreshTrigger, onToggle
           }}
         />
       )}
+
+      {/* Connectors Panel */}
+      <ConnectorsPanel
+        isOpen={showConnectorsPanel}
+        onClose={() => {
+          setShowConnectorsPanel(false);
+          if (onSettingsChange) onSettingsChange();
+        }}
+        onConnectorChange={() => {
+          setConnectorRefresh((n) => n + 1);
+          if (onSettingsChange) onSettingsChange();
+        }}
+      />
+
+      {/* Settings Panel */}
+      <SettingsPanel
+        isOpen={showSettingsPanel}
+        onClose={() => {
+          setShowSettingsPanel(false);
+          if (onSettingsChange) onSettingsChange();
+        }}
+      />
     </div>
   );
 }

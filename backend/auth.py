@@ -1,10 +1,22 @@
 import os
+import hmac
 import jwt
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-SECRET_KEY = os.getenv("JWT_SECRET", "supersecret-change-me")
+# Lever une erreur explicite si JWT_SECRET n'est pas défini en production
+_raw_secret = os.getenv("JWT_SECRET")
+if not _raw_secret:
+    import warnings
+    warnings.warn(
+        "[SÉCURITÉ] JWT_SECRET n'est pas défini. Un secret temporaire est utilisé — "
+        "NE PAS utiliser en production !",
+        stacklevel=2,
+    )
+    _raw_secret = "supersecret-change-me-INSECURE"
+
+SECRET_KEY = _raw_secret
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24 * 7  # 7 jours
 
@@ -30,6 +42,10 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
 
 
 def check_credentials(username: str, password: str) -> bool:
+    """Comparaison timing-safe pour éviter les timing attacks."""
     admin_user = os.getenv("ADMIN_USERNAME", "admin")
     admin_pass = os.getenv("ADMIN_PASSWORD", "changeme")
-    return username == admin_user and password == admin_pass
+    # hmac.compare_digest est résistant aux timing attacks
+    username_ok = hmac.compare_digest(username.encode("utf-8"), admin_user.encode("utf-8"))
+    password_ok = hmac.compare_digest(password.encode("utf-8"), admin_pass.encode("utf-8"))
+    return username_ok and password_ok

@@ -11,6 +11,7 @@ export default function Home() {
   const [selectedConv, setSelectedConv] = useState<number | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [settingsRefreshTrigger, setSettingsRefreshTrigger] = useState(0);
 
   if (isLoading) {
     return (
@@ -61,7 +62,9 @@ export default function Home() {
             selectedId={selectedConv}
             onSelect={handleSelectConv}
             refreshTrigger={refreshTrigger}
+            settingsRefreshTrigger={settingsRefreshTrigger}
             onToggleSidebar={toggleSidebar}
+            onSettingsChange={() => setSettingsRefreshTrigger((n) => n + 1)}
           />
         </div>
       </div>
@@ -82,6 +85,7 @@ export default function Home() {
           onToggleSidebar={toggleSidebar}
           onBack={handleBack}
           onNewMessage={() => setRefreshTrigger((n) => n + 1)}
+          settingsRefreshTrigger={settingsRefreshTrigger}
         />
       </div>
     </div>

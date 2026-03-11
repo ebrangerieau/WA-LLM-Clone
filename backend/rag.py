@@ -10,6 +10,9 @@ import hashlib
 from typing import List, Optional
 from pathlib import Path
 
+from logger import get_logger
+log = get_logger("mia.rag")
+
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
@@ -31,9 +34,9 @@ _collection = None
 def _get_embed_model() -> SentenceTransformer:
     global _embed_model
     if _embed_model is None:
-        print(f"[RAG] Chargement modèle : {EMBED_MODEL}")
+        log.info("Chargement modèle : %s", EMBED_MODEL)
         _embed_model = SentenceTransformer(EMBED_MODEL)
-        print("[RAG] Modèle prêt.")
+        log.info("Modèle prêt.")
     return _embed_model
 
 
@@ -49,7 +52,7 @@ def _get_collection():
             name="mia_knowledge",
             metadata={"hnsw:space": "cosine"},
         )
-        print(f"[RAG] Collection prête ({_collection.count()} chunks).")
+        log.info("Collection prête (%d chunks).", _collection.count())
     return _collection
 
 

@@ -3,6 +3,9 @@ import httpx
 import json
 from typing import AsyncGenerator, List, Dict, Optional
 
+from logger import get_logger
+log = get_logger("mia.llm")
+
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SUMMARIZER_MODEL = "openai/gpt-4o-mini"
@@ -81,14 +84,14 @@ async def generate_image(prompt: str, model_id: str, provider_id: str = "openrou
         "size": "1024x1024",
     }
 
-    print(f"[DEBUG] generate_image → POST {url} model={model_id}")
+    log.debug("generate_image → POST %s model=%s", url, model_id)
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(url, headers=headers, json=payload)
         body_bytes = await response.aread()
         body_text = body_bytes.decode("utf-8", errors="replace")
 
-        print(f"[DEBUG] generate_image ← status={response.status_code} body={body_text[:400]}")
+        log.debug("generate_image ← status=%d body=%s", response.status_code, body_text[:400])
 
         if response.status_code == 200:
             try:
@@ -110,7 +113,7 @@ async def generate_image(prompt: str, model_id: str, provider_id: str = "openrou
 
         # 404 → l'endpoint /images/generations n'existe pas sur ce provider
         if response.status_code == 404:
-            print(f"[DEBUG] generate_image → endpoint non disponible (404), tentative fallback chat")
+            log.debug("generate_image → endpoint non disponible (404), tentative fallback chat")
             return await _generate_image_fallback_chat(prompt, model_id, provider, headers)
 
         # Toute autre erreur : on remonte le message brut pour faciliter le diagnostic
@@ -134,14 +137,14 @@ async def _generate_image_fallback_chat(prompt: str, model_id: str, provider: di
         "max_tokens": 512,
     }
 
-    print(f"[DEBUG] _generate_image_fallback_chat → POST {url} model={model_id}")
+    log.debug("_generate_image_fallback_chat → POST %s model=%s", url, model_id)
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(url, headers=headers, json=payload)
         body_bytes = await response.aread()
         body_text = body_bytes.decode("utf-8", errors="replace")
 
-        print(f"[DEBUG] _generate_image_fallback_chat ← status={response.status_code} body={body_text[:400]}")
+        log.debug("_generate_image_fallback_chat ← status=%d body=%s", response.status_code, body_text[:400])
 
         if response.status_code != 200:
             raise Exception(f"Erreur fallback chat ({response.status_code}): {body_text[:300]}")
@@ -543,25 +546,76 @@ async def fetch_available_models() -> List[Dict]:
 
     for provider in get_providers():
         pid = provider["id"]
+        models = []
         try:
             if pid == "ollama":
                 models = await _fetch_ollama_models()
             elif pid == "openrouter":
                 models = await _fetch_openrouter_models(provider)
             elif pid == "perplexity":
-                # Perplexity ne supporte pas toujours /models proprement
                 models = await _fetch_perplexity_models(provider)
+            elif pid == "openai":
+                try:
+                    models = await _fetch_openai_compat_models(provider)
+                except Exception:
+                    models = _fetch_openai_models_fallback()
+            elif pid == "mistral":
+                try:
+                    models = await _fetch_openai_compat_models(provider)
+                except Exception:
+                    models = _fetch_mistral_models_fallback()
+            elif pid == "deepseek":
+                try:
+                    models = await _fetch_openai_compat_models(provider)
+                except Exception:
+                    models = _fetch_deepseek_models_fallback()
             else:
                 models = await _fetch_openai_compat_models(provider)
+
+            # Si le provider est activé dans le .env mais que l'API renvoie une liste vide (ex: clé invalide)
+            # on tente quand même un fallback pour certains providers majeurs
+            if not models:
+                if pid == "openai": models = _fetch_openai_models_fallback()
+                elif pid == "mistral": models = _fetch_mistral_models_fallback()
+                elif pid == "deepseek": models = _fetch_deepseek_models_fallback()
 
             for m in models:
                 m["provider_id"] = pid
                 m["provider_name"] = provider["name"]
             all_models.extend(models)
-        except Exception:
-            continue  # Provider non disponible, on skip silencieusement
+        except Exception as e:
+            log.error("Erreur lors de la récupération des modèles pour %s: %s", pid, e)
+            continue
 
     return all_models
+
+
+def _fetch_openai_models_fallback() -> List[Dict]:
+    return [
+        {"id": "gpt-4o", "name": "GPT-4o", "context_length": 128000, "pricing": {}},
+        {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "context_length": 128000, "pricing": {}},
+        {"id": "o1-preview", "name": "o1 Preview", "context_length": 128000, "pricing": {}},
+        {"id": "o1-mini", "name": "o1 Mini", "context_length": 128000, "pricing": {}},
+        {"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "context_length": 128000, "pricing": {}},
+    ]
+
+
+def _fetch_mistral_models_fallback() -> List[Dict]:
+    return [
+        {"id": "mistral-large-latest", "name": "Mistral Large", "context_length": 128000, "pricing": {}},
+        {"id": "mistral-medium-latest", "name": "Mistral Medium", "context_length": 32000, "pricing": {}},
+        {"id": "mistral-small-latest", "name": "Mistral Small", "context_length": 32000, "pricing": {}},
+        {"id": "open-mistral-7b", "name": "Mistral 7B", "context_length": 32000, "pricing": {}},
+        {"id": "pixtral-12b-2409", "name": "Pixtral 12B", "context_length": 128000, "pricing": {}},
+    ]
+
+
+def _fetch_deepseek_models_fallback() -> List[Dict]:
+    return [
+        {"id": "deepseek-chat", "name": "DeepSeek V3", "context_length": 64000, "pricing": {}},
+        {"id": "deepseek-coder", "name": "DeepSeek Coder", "context_length": 64000, "pricing": {}},
+        {"id": "deepseek-reasoner", "name": "DeepSeek R1", "context_length": 64000, "pricing": {}},
+    ]
 
 
 async def _fetch_perplexity_models(provider: dict) -> List[Dict]:

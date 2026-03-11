@@ -359,6 +359,7 @@ export interface UserPreferences {
   allowed_text_models?: string[];
   allowed_image_models?: string[];
   allowed_research_models?: string[];
+  enabled_providers?: string[];
   provider_id: string;
   connectors: string[];
 }

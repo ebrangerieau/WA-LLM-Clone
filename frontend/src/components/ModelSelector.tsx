@@ -13,6 +13,8 @@ interface Props {
   label?: string;
   icon?: React.ReactNode;
   allowedModels?: string[];
+  align?: "left" | "right";
+  position?: "top" | "bottom";
 }
 
 export default function ModelSelector({ 
@@ -23,7 +25,9 @@ export default function ModelSelector({
   favoriteModel,
   label, 
   icon, 
-  allowedModels 
+  allowedModels,
+  align = "right",
+  position = "bottom"
 }: Props) {
   const [models, setModels] = useState<LLMModel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,27 +58,31 @@ export default function ModelSelector({
   }, []);
 
   const currentModel = models.find((m) => m.id === selectedModel);
+  const displayName = currentModel?.name || selectedModel.split("/").pop() || "Modèle";
+
+  const positionClass = position === "top" ? "bottom-full mb-1" : "top-full mt-1";
+  const alignClass = align === "right" ? "right-0" : "left-0";
 
   return (
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors border border-gray-200 shadow-sm"
+        className="flex items-center gap-1 sm:gap-2 bg-white hover:bg-gray-50 text-gray-700 rounded-lg px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-xs font-medium transition-colors border border-gray-200 shadow-sm"
       >
         <div className="flex items-center gap-1.5 min-w-0">
           <div className="text-[#075e54] flex-shrink-0">
             {loading ? <Loader2 size={12} className="animate-spin" /> : (icon || <Cpu size={12} />)}
           </div>
           {label && <span className="text-gray-400 font-normal hidden lg:inline">{label} :</span>}
-          <span className="truncate max-w-[100px] font-semibold">
-            {currentModel?.name ?? selectedModel.split("/").pop() ?? "Modèle"}
+          <span className="truncate max-w-[120px] sm:max-w-[160px] font-semibold hidden md:inline">
+            {displayName}
           </span>
         </div>
         <ChevronDown size={12} className={`flex-shrink-0 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && (
-        <div className="absolute left-0 lg:right-0 top-full mt-1 w-64 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50">
+        <div className={`absolute ${alignClass} ${positionClass} w-64 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-[100]`}>
           <div className="max-h-80 overflow-y-auto py-1">
             {models.length === 0 && !loading && (
               <div className="px-4 py-3 text-center text-gray-400 text-xs">

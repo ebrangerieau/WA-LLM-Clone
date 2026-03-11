@@ -1,6 +1,5 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, Boolean, UniqueConstraint
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, Boolean
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 from datetime import datetime, timezone
 
 import os
@@ -14,7 +13,10 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./mia.db")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+
+
+class Base(DeclarativeBase):
+    pass
 
 
 class Agent(Base):
@@ -48,6 +50,8 @@ class Conversation(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     summary = Column(Text, nullable=True)  # Cached summary for long conversations
     agent_id = Column(Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    # Isolation par utilisateur : chaque conversation appartient à un utilisateur
+    username = Column(String(100), nullable=True, index=True)
 
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     agent = relationship("Agent", back_populates="conversations")
@@ -68,11 +72,12 @@ class Message(Base):
 
 
 class ConnectorToken(Base):
-    """Stores OAuth tokens for MCP connectors (one row per connector)."""
+    """Stores OAuth tokens for MCP connectors — isolé par utilisateur."""
     __tablename__ = "connector_tokens"
 
     id           = Column(Integer, primary_key=True, index=True)
-    connector_id = Column(String(100), nullable=False, unique=True, index=True)
+    connector_id = Column(String(100), nullable=False, index=True)
+    username     = Column(String(100), nullable=False, index=True)  # isolation par utilisateur
     token_json   = Column(Text, nullable=False)   # JSON blob: {access_token, refresh_token, expires_at, ...}
     created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -91,6 +96,7 @@ class UserPreferences(Base):
     allowed_text_models = Column(Text, default="[]")
     allowed_image_models = Column(Text, default="[]")
     allowed_research_models = Column(Text, default="[]")
+    enabled_providers = Column(Text, default="[]")  # JSON array of provider IDs
     provider_id = Column(String(50), nullable=True)
     connectors  = Column(Text, default="[]")   # JSON array de connector IDs
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
