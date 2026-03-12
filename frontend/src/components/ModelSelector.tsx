@@ -41,7 +41,10 @@ export default function ModelSelector({
       .then((data) => {
         // Filtrer par allowedModels si fourni, sinon tout afficher
         if (allowedModels && allowedModels.length > 0) {
-          setModels(data.filter(m => allowedModels.includes(m.id)));
+          const filtered = data.filter(m => allowedModels.includes(m.id));
+          // Fallback sur tous les modèles si aucun modèle autorisé n'est disponible
+          // (ex: Ollama hors ligne alors que des modèles Ollama étaient dans la liste)
+          setModels(filtered.length > 0 ? filtered : data);
         } else {
           setModels(data);
         }
