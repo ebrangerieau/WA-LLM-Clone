@@ -57,7 +57,7 @@ def get_providers() -> list[ProviderConfig]:
         {
             "id": "ollama",
             "name": "Ollama (local)",
-            "base_url": os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
+            "base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             "api_key": "",
             "models_endpoint": "/api/tags",
             "enabled": True,  # toujours tenté, désactivé si non joignable
