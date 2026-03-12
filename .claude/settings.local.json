@@ -4,7 +4,14 @@
       "Bash(python:*)",
       "Bash(npx --prefix D:/developpement/mia/frontend next lint:*)",
       "Bash(npm run lint:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(git add backend/providers.py frontend/src/components/ModelSelector.tsx)",
+      "Bash(git commit:*)",
+      "Bash(git push -u origin claude/zealous-dubinsky)",
+      "Bash(gh pr:*)",
+      "Bash(where gh)",
+      "Bash(git add .claude/settings.local.json)",
+      "Bash(git push)"
     ]
   }
 }
